@@ -3,6 +3,11 @@ package com.skyo.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,8 +29,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
@@ -88,6 +96,8 @@ private fun SkyjoGameScreen() {
     var message by remember { mutableStateOf("Draw from the deck or take the discard card.") }
     var showOpponents by remember { mutableStateOf(false) }
     var discardBounds by remember { mutableStateOf(Rect.Zero) }
+    var drawnCardBounds by remember { mutableStateOf(Rect.Zero) }
+    var botDropTarget by remember { mutableStateOf<Rect?>(null) }
     val gridBounds = remember { mutableStateMapOf<Int, Rect>() }
 
     fun dispatch(action: Action) {
@@ -105,6 +115,10 @@ private fun SkyjoGameScreen() {
     val isBotTurn = player.isBot
 
     LaunchedEffect(gameState.currentPlayerIndex, gameState.stage, gameState.roundEnded, gameState.gameEnded) {
+        if (!isBotTurn) {
+            showOpponents = false
+        }
+
         if (isBotTurn && !gameState.roundEnded && !gameState.gameEnded) {
             showOpponents = true
             var nextState = gameState
@@ -112,7 +126,7 @@ private fun SkyjoGameScreen() {
             if (nextState.stage == TurnStage.DRAW_OR_TAKE) {
                 val drawAction = chooseBotDrawAction(nextState)
                 message = "${player.name} is choosing a pile..."
-                delay(800)
+                delay(BOT_DECISION_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, drawAction)
                 gameState = nextState
                 message = if (drawAction == Action.DrawFromDiscard) {
@@ -123,18 +137,30 @@ private fun SkyjoGameScreen() {
             }
 
             if (nextState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD) {
-                delay(900)
+                delay(BOT_CARD_REVIEW_DELAY_MS)
                 val drawn = nextState.drawnCard
                 val swapIndex = chooseBotSwapIndex(nextState)
                 if (drawn != null && swapIndex != null) {
+                    gridBounds[swapIndex]?.takeIf { drawnCardBounds != Rect.Zero }?.let { target ->
+                        message = "${player.name} is moving ${drawn.value} into slot ${swapIndex + 1}..."
+                        botDropTarget = target
+                        delay(BOT_CARD_DRAG_DURATION_MS + BOT_AFTER_CARD_DRAG_DELAY_MS)
+                    }
                     nextState = SkyoGame.reduce(nextState, Action.SwapWithGrid(swapIndex))
                     gameState = nextState
+                    botDropTarget = null
                     message = "${player.name} swapped ${drawn.value} into slot ${swapIndex + 1}."
                 } else {
+                    discardBounds.takeIf { it != Rect.Zero && drawnCardBounds != Rect.Zero }?.let { target ->
+                        message = "${player.name} is moving the drawn card to the discard pile..."
+                        botDropTarget = target
+                        delay(BOT_CARD_DRAG_DURATION_MS + BOT_AFTER_CARD_DRAG_DELAY_MS)
+                    }
                     nextState = SkyoGame.reduce(nextState, Action.DiscardDrawnCard)
                     gameState = nextState
+                    botDropTarget = null
                     message = "${player.name} discarded the drawn card."
-                    delay(700)
+                    delay(BOT_REVEAL_DELAY_MS)
                     chooseBotRevealIndex(nextState)?.let { revealIndex ->
                         nextState = SkyoGame.reduce(nextState, Action.RevealGrid(revealIndex))
                         gameState = nextState
@@ -144,7 +170,7 @@ private fun SkyjoGameScreen() {
             }
 
             if (nextState.stage == TurnStage.TURN_END) {
-                delay(900)
+                delay(BOT_END_TURN_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, Action.EndTurn)
                 gameState = nextState
                 message = messageFor(nextState)
@@ -218,6 +244,8 @@ private fun SkyjoGameScreen() {
                 card = drawnCard,
                 stage = gameState.stage,
                 draggable = !isBotTurn && gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
+                animatedDropTarget = botDropTarget,
+                onPositioned = { drawnCardBounds = it },
                 onDropped = { center ->
                     when {
                         discardBounds.contains(center) -> dispatch(Action.DiscardDrawnCard)
@@ -235,28 +263,30 @@ private fun SkyjoGameScreen() {
             onToggle = { showOpponents = !showOpponents },
         )
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            userScrollEnabled = false,
-        ) {
-            itemsIndexed(player.grid) { index, card ->
-                BoardCard(
-                    card = card,
-                    enabled = !isBotTurn,
-                    onPositioned = { bounds -> gridBounds[index] = bounds },
-                    onClick = {
-                        when (gameState.stage) {
-                            TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
-                            TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
-                            TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
-                        }
-                    },
-                )
+        if (!showOpponents) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(4),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                userScrollEnabled = false,
+            ) {
+                itemsIndexed(player.grid) { index, card ->
+                    BoardCard(
+                        card = card,
+                        enabled = !isBotTurn,
+                        onPositioned = { bounds -> gridBounds[index] = bounds },
+                        onClick = {
+                            when (gameState.stage) {
+                                TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
+                                TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
+                                TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
+                            }
+                        },
+                    )
+                }
             }
         }
 
@@ -375,10 +405,31 @@ private fun DrawnCard(
     card: Card,
     stage: TurnStage,
     draggable: Boolean,
+    animatedDropTarget: Rect?,
+    onPositioned: (Rect) -> Unit,
     onDropped: (Offset) -> Unit,
 ) {
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
     var cardBounds by remember { mutableStateOf(Rect.Zero) }
+    val botDragOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+
+    LaunchedEffect(animatedDropTarget, cardBounds) {
+        val target = animatedDropTarget ?: run {
+            botDragOffset.snapTo(Offset.Zero)
+            return@LaunchedEffect
+        }
+
+        if (cardBounds != Rect.Zero) {
+            botDragOffset.snapTo(Offset.Zero)
+            botDragOffset.animateTo(
+                targetValue = target.center - cardBounds.center,
+                animationSpec = tween(
+                    durationMillis = BOT_CARD_DRAG_DURATION_MS.toInt(),
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+        }
+    }
 
     Row(
         modifier = Modifier
@@ -393,13 +444,19 @@ private fun DrawnCard(
             modifier = Modifier
                 .size(width = 66.dp, height = 96.dp)
                 .offset {
+                    val combinedOffset = dragOffset + botDragOffset.value
                     IntOffset(
-                        dragOffset.x.roundToInt(),
-                        dragOffset.y.roundToInt(),
+                        combinedOffset.x.roundToInt(),
+                        combinedOffset.y.roundToInt(),
                     )
                 }
                 .clip(RoundedCornerShape(6.dp))
-                .onGloballyPositioned { cardBounds = it.boundsInRoot() }
+                .onGloballyPositioned {
+                    if (botDragOffset.value == Offset.Zero) {
+                        cardBounds = it.boundsInRoot()
+                        onPositioned(cardBounds)
+                    }
+                }
                 .pointerInput(draggable) {
                     if (draggable) {
                         detectDragGestures(
@@ -452,7 +509,12 @@ private fun OpponentSection(
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
-    val opponents = gameState.players.filterIndexed { index, _ -> index != gameState.currentPlayerIndex }
+    val currentPlayer = gameState.players[gameState.currentPlayerIndex]
+    val opponents = if (currentPlayer.isBot) {
+        listOf(currentPlayer)
+    } else {
+        gameState.players.filter { it.isBot }
+    }
 
     Column(
         modifier = Modifier
@@ -461,13 +523,6 @@ private fun OpponentSection(
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Button(
-            onClick = onToggle,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (expanded) "Opponents einklappen" else "Opponents ausklappen")
-        }
-
         if (expanded) {
             opponents.forEach { opponent ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -480,6 +535,36 @@ private fun OpponentSection(
                 }
             }
         }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Button(
+                onClick = onToggle,
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6C4FB3)),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            ) {
+                EyeIcon()
+            }
+        }
+    }
+}
+
+@Composable
+private fun EyeIcon() {
+    Canvas(modifier = Modifier.size(22.dp)) {
+        drawOval(
+            color = Color.White,
+            style = Stroke(width = 2.5f),
+        )
+        drawCircle(
+            color = Color.White,
+            radius = size.minDimension * 0.18f,
+            center = Offset(size.width / 2f, size.height / 2f),
+        )
     }
 }
 
@@ -520,6 +605,13 @@ private fun MiniGrid(cards: List<Card>) {
 private fun SpacerWidth() {
     Box(modifier = Modifier.width(12.dp))
 }
+
+private const val BOT_DECISION_DELAY_MS = 1400L
+private const val BOT_CARD_REVIEW_DELAY_MS = 1300L
+private const val BOT_CARD_DRAG_DURATION_MS = 1100L
+private const val BOT_AFTER_CARD_DRAG_DELAY_MS = 450L
+private const val BOT_REVEAL_DELAY_MS = 1000L
+private const val BOT_END_TURN_DELAY_MS = 1200L
 
 @Composable
 private fun ActionButtons(
