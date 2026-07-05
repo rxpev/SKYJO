@@ -1,18 +1,5 @@
 plugins {
-    id 'org.jetbrains.kotlin.jvm' version '1.9.24'
-}
-
-group = 'com.skyo'
-version = '0.1.0'
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    testImplementation 'org.jetbrains.kotlin:kotlin-test'
-}
-
-test {
-    useJUnitPlatform()
+    id 'com.android.application' version '8.5.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+    id 'org.jetbrains.kotlin.jvm' version '1.9.24' apply false
 }

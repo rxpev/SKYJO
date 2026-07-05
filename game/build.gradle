@@ -1,0 +1,15 @@
+plugins {
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+group = 'com.skyo'
+version = '0.1.0'
+
+dependencies {
+    testImplementation 'org.jetbrains.kotlin:kotlin-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
