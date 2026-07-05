@@ -72,8 +72,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+            var showSplash by remember { mutableStateOf(true) }
+
+            LaunchedEffect(Unit) {
+                delay(SPLASH_DURATION_MS)
+                showSplash = false
+            }
+
             SkyjoTheme {
-                SkyjoGameScreen()
+                if (showSplash) {
+                    SkyjoSplashScreen()
+                } else {
+                    SkyjoGameScreen()
+                }
             }
         }
     }
@@ -84,8 +95,25 @@ private fun SkyjoTheme(content: @Composable () -> Unit) {
     MaterialTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color(0xFFF4F1EA),
+            color = Color(0xFFFFC1D6),
             content = content,
+        )
+    }
+}
+
+@Composable
+private fun SkyjoSplashScreen() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFFFC1D6)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.icon),
+            contentDescription = "SKYJO",
+            modifier = Modifier.size(width = 260.dp, height = 100.dp),
+            contentScale = ContentScale.Fit,
         )
     }
 }
@@ -190,11 +218,11 @@ private fun SkyjoGameScreen() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text(
-                    text = "SKYJO",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF143D35),
+                Image(
+                    painter = painterResource(R.drawable.icon),
+                    contentDescription = "SKYJO",
+                    modifier = Modifier.size(width = 118.dp, height = 45.dp),
+                    contentScale = ContentScale.Fit,
                 )
                 Text(
                     text = "${player.name}'s turn | Score ${player.score}",
@@ -612,6 +640,7 @@ private const val BOT_CARD_DRAG_DURATION_MS = 1100L
 private const val BOT_AFTER_CARD_DRAG_DELAY_MS = 450L
 private const val BOT_REVEAL_DELAY_MS = 1000L
 private const val BOT_END_TURN_DELAY_MS = 1200L
+private const val SPLASH_DURATION_MS = 1200L
 
 @Composable
 private fun ActionButtons(
