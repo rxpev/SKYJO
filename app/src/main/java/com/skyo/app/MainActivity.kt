@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.skyo.game.Action
 import com.skyo.game.Card
 import com.skyo.game.GameState
@@ -381,6 +382,7 @@ private fun DrawnCard(
 
     Row(
         modifier = Modifier
+            .zIndex(1f)
             .fillMaxWidth()
             .background(Color(0xFFE7F0E9), RoundedCornerShape(8.dp))
             .padding(10.dp),
