@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +49,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -63,6 +65,12 @@ import com.skyo.game.SkyoGame
 import com.skyo.game.TurnStage
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+private data class ActivePileDrag(
+    val card: Card,
+    val sourceBounds: Rect,
+    val dragOffset: Offset,
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -118,8 +126,11 @@ private fun SkyjoSplashScreen() {
 private fun SkyjoGameScreen() {
     var gameState by remember { mutableStateOf(SkyoGame.newGame(humanPlayerName = "You", botCount = 1)) }
     var message by remember { mutableStateOf("Draw from the deck or take the discard card.") }
+    var deckBounds by remember { mutableStateOf(Rect.Zero) }
     var discardBounds by remember { mutableStateOf(Rect.Zero) }
     var drawnCardBounds by remember { mutableStateOf(Rect.Zero) }
+    var activePileDrag by remember { mutableStateOf<ActivePileDrag?>(null) }
+    var humanHeldCardCameFromDeck by remember { mutableStateOf(false) }
     var botDropTarget by remember { mutableStateOf<Rect?>(null) }
     val gridBounds = remember { mutableStateMapOf<Int, Rect>() }
 
@@ -128,6 +139,38 @@ private fun SkyjoGameScreen() {
             .onSuccess { nextState ->
                 gameState = nextState
                 message = messageFor(nextState)
+                if (nextState.stage != TurnStage.CHOOSE_SWAP_OR_DISCARD) {
+                    humanHeldCardCameFromDeck = false
+                }
+            }
+            .onFailure { error ->
+                message = error.message ?: "That move is not allowed."
+            }
+    }
+
+    fun handleCardDrop(center: Offset) {
+        when {
+            discardBounds.contains(center) -> dispatch(Action.DiscardDrawnCard)
+            else -> gridBounds.entries.firstOrNull { (_, bounds) -> bounds.contains(center) }
+                ?.let { (index, _) -> dispatch(Action.SwapWithGrid(index)) }
+                ?: run { message = "Drop it on the discard pile or one of your cards." }
+        }
+    }
+
+    fun beginPileDrag(action: Action, sourceBounds: Rect) {
+        if (sourceBounds == Rect.Zero) return
+
+        runCatching { SkyoGame.reduce(gameState, action) }
+            .onSuccess { nextState ->
+                val drawn = nextState.drawnCard ?: return@onSuccess
+                gameState = nextState
+                activePileDrag = ActivePileDrag(
+                    card = drawn,
+                    sourceBounds = sourceBounds,
+                    dragOffset = Offset.Zero,
+                )
+                humanHeldCardCameFromDeck = action == Action.DrawFromDeck
+                message = "${gameState.players[gameState.currentPlayerIndex].name} picked up ${drawn.value}."
             }
             .onFailure { error ->
                 message = error.message ?: "That move is not allowed."
@@ -149,6 +192,7 @@ private fun SkyjoGameScreen() {
                 delay(BOT_DECISION_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, drawAction)
                 gameState = nextState
+                humanHeldCardCameFromDeck = false
                 message = if (drawAction == Action.DrawFromDiscard) {
                     "${player.name} took the discard card."
                 } else {
@@ -168,6 +212,7 @@ private fun SkyjoGameScreen() {
                     }
                     nextState = SkyoGame.reduce(nextState, Action.SwapWithGrid(swapIndex))
                     gameState = nextState
+                    humanHeldCardCameFromDeck = false
                     botDropTarget = null
                     message = "${player.name} swapped ${drawn.value} into slot ${swapIndex + 1}."
                 } else {
@@ -178,6 +223,7 @@ private fun SkyjoGameScreen() {
                     }
                     nextState = SkyoGame.reduce(nextState, Action.DiscardDrawnCard)
                     gameState = nextState
+                    humanHeldCardCameFromDeck = false
                     botDropTarget = null
                     message = "${player.name} discarded the drawn card."
                     delay(BOT_REVEAL_DELAY_MS)
@@ -198,136 +244,210 @@ private fun SkyjoGameScreen() {
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column {
-                Image(
-                    painter = painterResource(R.drawable.icon),
-                    contentDescription = "SKYJO",
-                    modifier = Modifier.size(width = 118.dp, height = 45.dp),
-                    contentScale = ContentScale.Fit,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Image(
+                        painter = painterResource(R.drawable.icon),
+                        contentDescription = "SKYJO",
+                        modifier = Modifier.size(width = 118.dp, height = 45.dp),
+                        contentScale = ContentScale.Fit,
+                    )
+                    Text(
+                        text = "${player.name}'s turn | Score ${player.score}",
+                        fontSize = 15.sp,
+                        color = Color(0xFF36524A),
+                    )
+                }
+
                 Text(
-                    text = "${player.name}'s turn | Score ${player.score}",
-                    fontSize = 15.sp,
-                    color = Color(0xFF36524A),
+                    text = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF143D35),
+                )
+            }
+
+            if (opponent != null) {
+                PlayerBoard(
+                    player = opponent,
+                    title = "${opponent.name} | Score ${opponent.score}",
+                    enabled = false,
+                    compact = true,
+                    onCardPositioned = { index, bounds ->
+                        if (player.id == opponent.id) {
+                            gridBounds[index] = bounds
+                        }
+                    },
+                    onCardClick = {},
                 )
             }
 
             Text(
-                text = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF143D35),
+                text = message,
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF41534F),
+                fontSize = 13.sp,
             )
-        }
 
-        if (opponent != null) {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                HeldCardSlot(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(x = 48.dp),
+                    card = gameState.drawnCard.takeIf { activePileDrag == null },
+                    draggable = !isBotTurn &&
+                        humanHeldCardCameFromDeck &&
+                        gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
+                    animatedDropTarget = botDropTarget,
+                    onPositioned = { bounds ->
+                        drawnCardBounds = bounds
+                    },
+                    onDragStart = {
+                        val drawn = gameState.drawnCard
+                        if (drawn != null && drawnCardBounds != Rect.Zero) {
+                            activePileDrag = ActivePileDrag(
+                                card = drawn,
+                                sourceBounds = drawnCardBounds,
+                                dragOffset = Offset.Zero,
+                            )
+                        }
+                    },
+                    onDrag = { dragAmount ->
+                        activePileDrag = activePileDrag?.let {
+                            it.copy(dragOffset = it.dragOffset + dragAmount)
+                        }
+                    },
+                    onDragEnd = {
+                        activePileDrag?.let { drag ->
+                            handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
+                        }
+                        activePileDrag = null
+                    },
+                    onDropped = ::handleCardDrop,
+                )
+
+                Row(
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    PileCard(
+                        label = "Deck",
+                        value = gameState.deck.size.toString(),
+                        compact = true,
+                        enabled = !isBotTurn,
+                        draggable = !isBotTurn && gameState.stage == TurnStage.DRAW_OR_TAKE,
+                        onPositioned = { deckBounds = it },
+                        onDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
+                        onDrag = { dragAmount ->
+                            activePileDrag = activePileDrag?.let {
+                                it.copy(dragOffset = it.dragOffset + dragAmount)
+                            }
+                        },
+                        onDragEnd = {
+                            activePileDrag?.let { drag ->
+                                handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
+                            }
+                            activePileDrag = null
+                        },
+                        onClick = {
+                            runCatching { SkyoGame.reduce(gameState, Action.DrawFromDeck) }
+                                .onSuccess { nextState ->
+                                    gameState = nextState
+                                    humanHeldCardCameFromDeck = true
+                                    message = messageFor(nextState)
+                                }
+                                .onFailure { error ->
+                                    humanHeldCardCameFromDeck = false
+                                    message = error.message ?: "That move is not allowed."
+                                }
+                        },
+                    )
+                    SpacerWidth()
+                    val discard = gameState.discardPile.lastOrNull()
+                    PileCard(
+                        label = "Discard",
+                        value = discard?.value?.toString() ?: "-",
+                        imageRes = discard?.let { cardImageRes(it.value) },
+                        compact = true,
+                        enabled = !isBotTurn,
+                        draggable = !isBotTurn && gameState.stage == TurnStage.DRAW_OR_TAKE,
+                        onPositioned = { discardBounds = it },
+                        onDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
+                        onDrag = { dragAmount ->
+                            activePileDrag = activePileDrag?.let {
+                                it.copy(dragOffset = it.dragOffset + dragAmount)
+                            }
+                        },
+                        onDragEnd = {
+                            activePileDrag?.let { drag ->
+                                handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
+                            }
+                            activePileDrag = null
+                        },
+                        onClick = {
+                            humanHeldCardCameFromDeck = false
+                            dispatch(Action.DrawFromDiscard)
+                        },
+                    )
+                }
+            }
+
             PlayerBoard(
-                player = opponent,
-                title = "${opponent.name} | Score ${opponent.score}",
-                enabled = false,
-                compact = true,
+                player = humanPlayer,
+                title = "${humanPlayer.name} | Score ${humanPlayer.score}",
+                enabled = !isBotTurn,
+                compact = false,
+                modifier = Modifier.weight(1f, fill = false),
                 onCardPositioned = { index, bounds ->
-                    if (player.id == opponent.id) {
+                    if (player.id == humanPlayer.id) {
                         gridBounds[index] = bounds
                     }
                 },
-                onCardClick = {},
-            )
-        }
-
-        Text(
-            text = message,
-            modifier = Modifier.fillMaxWidth(),
-            color = Color(0xFF41534F),
-            fontSize = 13.sp,
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PileCard(
-                label = "Deck",
-                value = gameState.deck.size.toString(),
-                compact = true,
-                enabled = !isBotTurn,
-                onClick = { dispatch(Action.DrawFromDeck) },
-            )
-            SpacerWidth()
-            val discard = gameState.discardPile.lastOrNull()
-            PileCard(
-                label = "Discard",
-                value = discard?.value?.toString() ?: "-",
-                imageRes = discard?.let { cardImageRes(it.value) },
-                compact = true,
-                enabled = !isBotTurn,
-                onPositioned = { discardBounds = it },
-                onClick = { dispatch(Action.DrawFromDiscard) },
-            )
-        }
-
-        gameState.drawnCard?.let { drawnCard ->
-            DrawnCard(
-                card = drawnCard,
-                stage = gameState.stage,
-                draggable = !isBotTurn && gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
-                animatedDropTarget = botDropTarget,
-                onPositioned = { drawnCardBounds = it },
-                onDropped = { center ->
-                    when {
-                        discardBounds.contains(center) -> dispatch(Action.DiscardDrawnCard)
-                        else -> gridBounds.entries.firstOrNull { (_, bounds) -> bounds.contains(center) }
-                            ?.let { (index, _) -> dispatch(Action.SwapWithGrid(index)) }
-                            ?: run { message = "Drop it on the discard pile or one of your cards." }
+                onCardClick = { index ->
+                    when (gameState.stage) {
+                        TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
+                        TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
+                        TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
                     }
+                },
+            )
+
+            ActionButtons(
+                gameState = gameState,
+                enabled = !isBotTurn,
+                onDiscard = { dispatch(Action.DiscardDrawnCard) },
+                onEndTurn = { dispatch(Action.EndTurn) },
+                onNewGame = {
+                    gameState = SkyoGame.newGame(humanPlayerName = "You", botCount = 1)
+                    message = "Draw from the deck or take the discard card."
+                    gridBounds.clear()
+                    activePileDrag = null
+                    humanHeldCardCameFromDeck = false
+                    botDropTarget = null
                 },
             )
         }
 
-        PlayerBoard(
-            player = humanPlayer,
-            title = "${humanPlayer.name} | Score ${humanPlayer.score}",
-            enabled = !isBotTurn,
-            compact = false,
-            modifier = Modifier.weight(1f, fill = false),
-            onCardPositioned = { index, bounds ->
-                if (player.id == humanPlayer.id) {
-                    gridBounds[index] = bounds
-                }
-            },
-            onCardClick = { index ->
-                when (gameState.stage) {
-                    TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
-                    TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
-                    TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
-                }
-            },
-        )
-
-        ActionButtons(
-            gameState = gameState,
-            enabled = !isBotTurn,
-            onDiscard = { dispatch(Action.DiscardDrawnCard) },
-            onEndTurn = { dispatch(Action.EndTurn) },
-            onNewGame = {
-                gameState = SkyoGame.newGame(humanPlayerName = "You", botCount = 1)
-                message = "Draw from the deck or take the discard card."
-                gridBounds.clear()
-                botDropTarget = null
-            },
-        )
+        activePileDrag?.let { drag ->
+            FloatingDraggedCard(drag)
+        }
     }
 }
 
@@ -396,9 +516,18 @@ private fun PileCard(
     imageRes: Int? = null,
     compact: Boolean = false,
     enabled: Boolean = true,
+    draggable: Boolean = false,
     onPositioned: (Rect) -> Unit = {},
+    onDragStart: () -> Unit = {},
+    onDrag: (Offset) -> Unit = {},
+    onDragEnd: () -> Unit = {},
     onClick: () -> Unit,
 ) {
+    val currentDraggable by rememberUpdatedState(draggable)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
@@ -408,6 +537,35 @@ private fun PileCard(
                 )
                 .clip(RoundedCornerShape(6.dp))
                 .onGloballyPositioned { onPositioned(it.boundsInRoot()) }
+                .pointerInput(Unit) {
+                    var isActivePileDrag = false
+                    detectDragGestures(
+                        onDragStart = {
+                            isActivePileDrag = currentDraggable
+                            if (isActivePileDrag) {
+                                currentOnDragStart()
+                            }
+                        },
+                        onDrag = { change, dragAmount ->
+                            if (isActivePileDrag) {
+                                change.consume()
+                                currentOnDrag(dragAmount)
+                            }
+                        },
+                        onDragEnd = {
+                            if (isActivePileDrag) {
+                                currentOnDragEnd()
+                            }
+                            isActivePileDrag = false
+                        },
+                        onDragCancel = {
+                            if (isActivePileDrag) {
+                                currentOnDragEnd()
+                            }
+                            isActivePileDrag = false
+                        },
+                    )
+                }
                 .clickable(enabled = enabled, onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
@@ -433,17 +591,23 @@ private fun PileCard(
 }
 
 @Composable
-private fun DrawnCard(
-    card: Card,
-    stage: TurnStage,
+private fun HeldCardSlot(
+    modifier: Modifier = Modifier,
+    card: Card?,
     draggable: Boolean,
     animatedDropTarget: Rect?,
     onPositioned: (Rect) -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
     onDropped: (Offset) -> Unit,
 ) {
-    var dragOffset by remember { mutableStateOf(Offset.Zero) }
     var cardBounds by remember { mutableStateOf(Rect.Zero) }
     val botDragOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val currentDraggable by rememberUpdatedState(draggable)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
 
     LaunchedEffect(animatedDropTarget, cardBounds) {
         val target = animatedDropTarget ?: run {
@@ -463,75 +627,105 @@ private fun DrawnCard(
         }
     }
 
-    Row(
-        modifier = Modifier
+    Box(
+        modifier = modifier
             .zIndex(1f)
-            .fillMaxWidth()
-            .background(Color(0xFFE7F0E9), RoundedCornerShape(8.dp))
-            .padding(10.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+            .size(width = 62.dp, height = 110.dp),
+        contentAlignment = Alignment.TopCenter,
     ) {
         Box(
             modifier = Modifier
-                .size(width = 66.dp, height = 96.dp)
+                .size(width = 62.dp, height = 90.dp)
                 .offset {
-                    val combinedOffset = dragOffset + botDragOffset.value
                     IntOffset(
-                        combinedOffset.x.roundToInt(),
-                        combinedOffset.y.roundToInt(),
+                        botDragOffset.value.x.roundToInt(),
+                        botDragOffset.value.y.roundToInt(),
                     )
                 }
                 .clip(RoundedCornerShape(6.dp))
+                .background(Color(0x1AFF335D))
+                .border(
+                    width = if (card == null) 2.dp else 3.dp,
+                    color = if (card == null) Color(0xFFFF335D) else Color(0xFFFFE45C),
+                    shape = RoundedCornerShape(6.dp),
+                )
                 .onGloballyPositioned {
                     if (botDragOffset.value == Offset.Zero) {
                         cardBounds = it.boundsInRoot()
                         onPositioned(cardBounds)
                     }
                 }
-                .pointerInput(draggable) {
-                    if (draggable) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
+                .pointerInput(Unit) {
+                    var isActiveDrag = false
+                    detectDragGestures(
+                        onDragStart = {
+                            isActiveDrag = currentDraggable
+                            if (isActiveDrag) {
+                                currentOnDragStart()
+                            }
+                        },
+                        onDrag = { change, dragAmount ->
+                            if (isActiveDrag) {
                                 change.consume()
-                                dragOffset += dragAmount
-                            },
-                            onDragEnd = {
+                                currentOnDrag(dragAmount)
+                            }
+                        },
+                        onDragEnd = {
+                            if (isActiveDrag) {
+                                currentOnDragEnd()
+                            } else if (draggable) {
                                 onDropped(cardBounds.center)
-                                dragOffset = Offset.Zero
-                            },
-                            onDragCancel = {
-                                dragOffset = Offset.Zero
-                            },
-                        )
-                    }
+                            }
+                            isActiveDrag = false
+                        },
+                        onDragCancel = {
+                            if (isActiveDrag) {
+                                currentOnDragEnd()
+                            }
+                            isActiveDrag = false
+                        },
+                    )
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                painter = painterResource(cardImageRes(card.value)),
-                contentDescription = "Drawn card ${card.value}",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
-            )
+            if (card != null) {
+                Image(
+                    painter = painterResource(cardImageRes(card.value)),
+                    contentDescription = "Held card ${card.value}",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
         }
-        SpacerWidth()
-        Column {
-            Text(
-                text = "Picked up: ${card.value}",
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF143D35),
+    }
+}
+
+@Composable
+private fun FloatingDraggedCard(drag: ActivePileDrag) {
+    val density = LocalDensity.current
+
+    Box(
+        modifier = Modifier
+            .zIndex(2f)
+            .offset {
+                IntOffset(
+                    (drag.sourceBounds.left + drag.dragOffset.x).roundToInt(),
+                    (drag.sourceBounds.top + drag.dragOffset.y).roundToInt(),
+                )
+            }
+            .size(
+                width = with(density) { drag.sourceBounds.width.toDp() },
+                height = with(density) { drag.sourceBounds.height.toDp() },
             )
-            Text(
-                text = if (stage == TurnStage.CHOOSE_SWAP_OR_DISCARD) {
-                    "Drag it onto your grid or the discard pile."
-                } else {
-                    "Card in hand"
-                },
-                color = Color(0xFF41534F),
-                fontSize = 13.sp,
-            )
-        }
+            .clip(RoundedCornerShape(6.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painterResource(cardImageRes(drag.card.value)),
+            contentDescription = "Dragged card ${drag.card.value}",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit,
+        )
     }
 }
 
