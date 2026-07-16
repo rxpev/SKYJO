@@ -17,14 +17,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -305,48 +303,44 @@ private fun SkyjoGameScreen() {
 
             Box(
                 modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter,
             ) {
-                HeldCardSlot(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .offset(x = 48.dp),
-                    card = gameState.drawnCard.takeIf { activePileDrag == null },
-                    draggable = !isBotTurn &&
-                        humanHeldCardCameFromDeck &&
-                        gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
-                    animatedDropTarget = botDropTarget,
-                    onPositioned = { bounds ->
-                        drawnCardBounds = bounds
-                    },
-                    onDragStart = {
-                        val drawn = gameState.drawnCard
-                        if (drawn != null && drawnCardBounds != Rect.Zero) {
-                            activePileDrag = ActivePileDrag(
-                                card = drawn,
-                                sourceBounds = drawnCardBounds,
-                                dragOffset = Offset.Zero,
-                            )
-                        }
-                    },
-                    onDrag = { dragAmount ->
-                        activePileDrag = activePileDrag?.let {
-                            it.copy(dragOffset = it.dragOffset + dragAmount)
-                        }
-                    },
-                    onDragEnd = {
-                        activePileDrag?.let { drag ->
-                            handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
-                        }
-                        activePileDrag = null
-                    },
-                    onDropped = ::handleCardDrop,
-                )
-
                 Row(
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    horizontalArrangement = Arrangement.Center,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
+                    HeldCardSlot(
+                        card = gameState.drawnCard.takeIf { activePileDrag == null },
+                        draggable = !isBotTurn &&
+                            humanHeldCardCameFromDeck &&
+                            gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
+                        animatedDropTarget = botDropTarget,
+                        onPositioned = { bounds ->
+                            drawnCardBounds = bounds
+                        },
+                        onDragStart = {
+                            val drawn = gameState.drawnCard
+                            if (drawn != null && drawnCardBounds != Rect.Zero) {
+                                activePileDrag = ActivePileDrag(
+                                    card = drawn,
+                                    sourceBounds = drawnCardBounds,
+                                    dragOffset = Offset.Zero,
+                                )
+                            }
+                        },
+                        onDrag = { dragAmount ->
+                            activePileDrag = activePileDrag?.let {
+                                it.copy(dragOffset = it.dragOffset + dragAmount)
+                            }
+                        },
+                        onDragEnd = {
+                            activePileDrag?.let { drag ->
+                                handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
+                            }
+                            activePileDrag = null
+                        },
+                        onDropped = ::handleCardDrop,
+                    )
                     PileCard(
                         label = "Deck",
                         value = gameState.deck.size.toString(),
@@ -379,7 +373,6 @@ private fun SkyjoGameScreen() {
                                 }
                         },
                     )
-                    SpacerWidth()
                     val discard = gameState.discardPile.lastOrNull()
                     PileCard(
                         label = "Discard",
@@ -461,8 +454,6 @@ private fun BoardCard(
 ) {
     Box(
         modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(0.68f)
             .clip(RoundedCornerShape(6.dp))
             .onGloballyPositioned { onPositioned(it.boundsInRoot()) }
             .clickable(enabled = enabled && !card.isCleared, onClick = onClick),
@@ -761,6 +752,7 @@ private fun PlayerBoard(
         BoardGrid(
             cards = player.grid,
             enabled = enabled,
+            compact = compact,
             spacing = if (compact) 3.dp else 8.dp,
             onCardPositioned = onCardPositioned,
             onCardClick = onCardClick,
@@ -772,17 +764,21 @@ private fun PlayerBoard(
 private fun BoardGrid(
     cards: List<Card>,
     enabled: Boolean,
+    compact: Boolean,
     spacing: Dp,
     onCardPositioned: (Int, Rect) -> Unit,
     onCardClick: (Int) -> Unit,
 ) {
+    val cardWidth = if (compact) 40.dp else 58.dp
+    val cardHeight = if (compact) 59.dp else 85.dp
+
     Column(
         modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(spacing),
     ) {
         cards.chunked(4).forEachIndexed { rowIndex, rowCards ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(spacing),
             ) {
                 rowCards.forEachIndexed { columnIndex, card ->
@@ -790,7 +786,7 @@ private fun BoardGrid(
                     BoardCard(
                         card = card,
                         enabled = enabled,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.size(width = cardWidth, height = cardHeight),
                         onPositioned = { bounds -> onCardPositioned(index, bounds) },
                         onClick = { onCardClick(index) },
                     )
@@ -798,11 +794,6 @@ private fun BoardGrid(
             }
         }
     }
-}
-
-@Composable
-private fun SpacerWidth() {
-    Box(modifier = Modifier.width(12.dp))
 }
 
 private const val BOT_DECISION_DELAY_MS = 1400L
