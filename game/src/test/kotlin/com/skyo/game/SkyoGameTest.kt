@@ -4,6 +4,7 @@ import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -124,8 +125,56 @@ class SkyoGameTest {
         assertTrue(playerGrid[0].isCleared)
         assertTrue(playerGrid[4].isCleared)
         assertTrue(playerGrid[8].isCleared)
-        assertEquals(3, afterReveal.discardPile.takeLast(3).count { it.value == 5 && it.isCleared })
+        assertEquals(3, afterReveal.discardPile.takeLast(3).count { it.value == 5 && !it.isCleared })
         assertEquals(52, SkyoGame.scoreGrid(playerGrid))
+    }
+
+    @Test
+    fun `cleared column cards drawn from discard do not clear the new grid slot`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 1, 2, 3,
+                        0, 4, 6, 7,
+                        0, 8, 10, 11,
+                    ).mapIndexed { index, card ->
+                        if (index == 0 || index == 4) card.copy(isRevealed = true) else card
+                    },
+                ),
+                PlayerState(
+                    id = 1,
+                    name = "Bot 1",
+                    isBot = true,
+                    grid = gridOf(
+                        4, 4, -1, 3,
+                        8, 8, -1, 5,
+                        9, 9, 10, 11,
+                        revealed = true,
+                    ),
+                ),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(7, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterClear = SkyoGame.reduce(state, Action.RevealGrid(8))
+        assertTrue(afterClear.players[0].grid[0].isCleared)
+        assertFalse(afterClear.discardPile.last().isCleared)
+
+        val botTurn = afterClear.copy(currentPlayerIndex = 1, stage = TurnStage.DRAW_OR_TAKE)
+        val afterDraw = SkyoGame.reduce(botTurn, Action.DrawFromDiscard)
+        assertFalse(assertNotNull(afterDraw.drawnCard).isCleared)
+
+        val afterSwap = SkyoGame.reduce(afterDraw, Action.SwapWithGrid(0))
+        assertEquals(0, afterSwap.players[1].grid[0].value)
+        assertTrue(afterSwap.players[1].grid[0].isRevealed)
+        assertFalse(afterSwap.players[1].grid[0].isCleared)
     }
 
     @Test

@@ -90,7 +90,7 @@ object SkyoGame {
     private fun drawFromDeck(state: GameState): GameState {
         require(state.stage == TurnStage.DRAW_OR_TAKE) { "Must be in DRAW_OR_TAKE stage" }
         require(state.deck.isNotEmpty()) { "Deck is empty" }
-        val drawn = state.deck.first().copy(isRevealed = true)
+        val drawn = state.deck.first().copy(isRevealed = true, isCleared = false)
         return state.copy(
             deck = state.deck.drop(1),
             drawnCard = drawn,
@@ -102,7 +102,7 @@ object SkyoGame {
     private fun drawFromDiscard(state: GameState): GameState {
         require(state.stage == TurnStage.DRAW_OR_TAKE) { "Must be in DRAW_OR_TAKE stage" }
         require(state.discardPile.isNotEmpty()) { "Discard pile is empty" }
-        val drawn = state.discardPile.last().copy(isRevealed = true)
+        val drawn = state.discardPile.last().copy(isRevealed = true, isCleared = false)
         return state.copy(
             discardPile = state.discardPile.dropLast(1),
             drawnCard = drawn,
@@ -119,7 +119,7 @@ object SkyoGame {
         val current = state.players[state.currentPlayerIndex]
         require(!current.grid[index].isCleared) { "Cannot swap with a cleared card slot" }
         val swappedOut = current.grid[index].copy(isRevealed = true)
-        val newGrid = current.grid.toMutableList().also { it[index] = drawn.copy(isRevealed = true) }
+        val newGrid = current.grid.toMutableList().also { it[index] = drawn.copy(isRevealed = true, isCleared = false) }
         val updatedPlayers = state.players.toMutableList().also {
             it[state.currentPlayerIndex] = current.copy(grid = newGrid)
         }
@@ -141,7 +141,7 @@ object SkyoGame {
         val current = state.players[state.currentPlayerIndex]
         val hasHiddenGridCard = current.grid.any { !it.isCleared && !it.isRevealed }
         return state.copy(
-            discardPile = state.discardPile + drawn.copy(isRevealed = true),
+            discardPile = state.discardPile + drawn.copy(isRevealed = true, isCleared = false),
             drawnCard = null,
             revealRequiredBeforeEndTurn = hasHiddenGridCard,
             stage = TurnStage.TURN_END,
@@ -278,7 +278,7 @@ object SkyoGame {
 
             if (shouldClear) {
                 indices.forEach { index ->
-                    clearedCards += grid[index].copy(isRevealed = true, isCleared = true)
+                    clearedCards += grid[index].copy(isRevealed = true, isCleared = false)
                     grid[index] = grid[index].copy(isRevealed = true, isCleared = true)
                 }
             }
