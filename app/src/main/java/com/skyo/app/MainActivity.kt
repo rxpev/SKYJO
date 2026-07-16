@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -156,14 +157,14 @@ private fun MainMenuScreen(
     savedGames: SavedGameStore,
     onOpenGame: (GameState) -> Unit,
 ) {
-    var hasUnfinishedGame by remember { mutableStateOf(false) }
+    var unfinishedGame by remember { mutableStateOf<GameState?>(null) }
     var showNewGameConfirmation by remember { mutableStateOf(false) }
     var restoreNewGameFocus by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val newGameFocusRequester = remember { FocusRequester() }
 
     fun refreshSavedGameAvailability() {
-        hasUnfinishedGame = savedGames.loadUnfinishedGame() != null
+        unfinishedGame = savedGames.loadUnfinishedGame()
     }
 
     fun createAndOpenNewGame() {
@@ -213,30 +214,35 @@ private fun MainMenuScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                if (hasUnfinishedGame) {
+                unfinishedGame?.let { savedGame ->
                     Button(
                         onClick = {
-                            val savedGame = savedGames.loadUnfinishedGame()
-                            if (savedGame == null) {
+                            val latestSavedGame = savedGames.loadUnfinishedGame()
+                            if (latestSavedGame == null) {
                                 refreshSavedGameAvailability()
                             } else {
-                                onOpenGame(savedGame)
+                                unfinishedGame = latestSavedGame
+                                onOpenGame(latestSavedGame)
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Continue Game")
+                        Text(
+                            text = "Continue Game\n${savedGame.continueGameScoreText()}",
+                            textAlign = TextAlign.Center,
+                        )
                     }
                 }
 
                 Button(
                     onClick = {
                         message = null
-                        if (savedGames.loadUnfinishedGame() == null) {
-                            refreshSavedGameAvailability()
+                        val latestSavedGame = savedGames.loadUnfinishedGame()
+                        if (latestSavedGame == null) {
+                            unfinishedGame = null
                             createAndOpenNewGame()
                         } else {
-                            hasUnfinishedGame = true
+                            unfinishedGame = latestSavedGame
                             showNewGameConfirmation = true
                         }
                     },
@@ -272,6 +278,12 @@ private fun MainMenuScreen(
             },
         )
     }
+}
+
+private fun GameState.continueGameScoreText(): String {
+    val humanScore = players.firstOrNull { !it.isBot }?.score ?: 0
+    val botScore = players.filter { it.isBot }.sumOf { it.score }
+    return "You $humanScore vs Bot $botScore"
 }
 
 @Composable
