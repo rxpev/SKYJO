@@ -16,6 +16,7 @@ data class PlayerState(
 )
 
 enum class TurnStage {
+    OPENING_REVEAL,
     DRAW_OR_TAKE,
     CHOOSE_SWAP_OR_DISCARD,
     TURN_END,
@@ -32,6 +33,8 @@ data class GameState(
     val round: Int = 1,
     val roundFinisherIndex: Int? = null,
     val finalTurnsRemaining: Int = 0,
+    val openingRevealCount: Int = 2,
+    val openingContenderIds: Set<Int> = emptySet(),
     val roundEnded: Boolean = false,
     val gameEnded: Boolean = false,
 )
@@ -42,5 +45,6 @@ sealed interface Action {
     data class SwapWithGrid(val index: Int) : Action
     data object DiscardDrawnCard : Action
     data class RevealGrid(val index: Int) : Action
+    data class RevealOpeningBotGrid(val playerId: Int, val index: Int) : Action
     data object EndTurn : Action
 }

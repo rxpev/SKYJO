@@ -76,6 +76,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
 private data class ActivePileDrag(
     val card: Card,
@@ -392,12 +393,56 @@ private fun SkyjoGameScreen(
     }
 
     val player = gameState.players[gameState.currentPlayerIndex]
+    val isOpeningReveal = gameState.stage == TurnStage.OPENING_REVEAL
     val isBotTurn = player.isBot
     val humanPlayer = gameState.players.first { !it.isBot }
     val opponent = gameState.players.firstOrNull { it.isBot }
+    val humanOpeningRevealKey = humanPlayer.grid.count { it.isRevealed }
+
+    LaunchedEffect(gameState.stage, gameState.openingRevealCount, gameState.openingContenderIds, humanOpeningRevealKey) {
+        if (!isOpeningReveal || gameState.roundEnded || gameState.gameEnded) {
+            return@LaunchedEffect
+        }
+
+        var nextState = gameState
+        val contenderIds = nextState.openingContenderIds.ifEmpty { nextState.players.map { it.id }.toSet() }
+        val botsToReveal = nextState.players.filter { bot ->
+            bot.isBot &&
+                bot.id in contenderIds &&
+                bot.grid.count { it.isRevealed } < nextState.openingRevealCount
+        }
+
+        for (bot in botsToReveal) {
+            val currentBot = nextState.players.firstOrNull { it.id == bot.id } ?: continue
+            val revealIndices = SkyoGame.chooseOpeningBotRevealIndices(
+                player = currentBot,
+                targetRevealCount = nextState.openingRevealCount,
+                random = Random.Default,
+            )
+
+            for (revealIndex in revealIndices) {
+                delay(Random.nextLong(OPENING_BOT_REVEAL_DELAY_MIN_MS, OPENING_BOT_REVEAL_DELAY_MAX_MS))
+                val revealResult = runCatching {
+                    SkyoGame.reduce(nextState, Action.RevealOpeningBotGrid(bot.id, revealIndex))
+                }
+
+                nextState = revealResult.getOrElse { return@LaunchedEffect }
+                setGameState(nextState)
+                message = if (nextState.stage == TurnStage.OPENING_REVEAL) {
+                    "${bot.name} revealed slot ${revealIndex + 1}."
+                } else {
+                    messageFor(nextState)
+                }
+
+                if (nextState.stage != TurnStage.OPENING_REVEAL) {
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
 
     LaunchedEffect(gameState.currentPlayerIndex, gameState.stage, gameState.roundEnded, gameState.gameEnded) {
-        if (isBotTurn && !gameState.roundEnded && !gameState.gameEnded) {
+        if (isBotTurn && !isOpeningReveal && !gameState.roundEnded && !gameState.gameEnded) {
             var nextState = gameState
 
             if (nextState.stage == TurnStage.DRAW_OR_TAKE) {
@@ -536,6 +581,7 @@ private fun SkyjoGameScreen(
                     HeldCardSlot(
                         card = gameState.drawnCard.takeIf { activePileDrag == null },
                         draggable = !isBotTurn &&
+                            !isOpeningReveal &&
                             humanHeldCardCameFromDeck &&
                             gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
                         animatedDropTarget = botDropTarget,
@@ -569,8 +615,8 @@ private fun SkyjoGameScreen(
                         label = "Deck",
                         value = gameState.deck.size.toString(),
                         compact = true,
-                        enabled = !isBotTurn,
-                        draggable = !isBotTurn && gameState.stage == TurnStage.DRAW_OR_TAKE,
+                        enabled = !isBotTurn && !isOpeningReveal,
+                        draggable = !isBotTurn && !isOpeningReveal && gameState.stage == TurnStage.DRAW_OR_TAKE,
                         onPositioned = { deckBounds = it },
                         onDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
                         onDrag = { dragAmount ->
@@ -603,8 +649,8 @@ private fun SkyjoGameScreen(
                         value = discard?.value?.toString() ?: "-",
                         imageRes = discard?.let { cardImageRes(it.value) },
                         compact = true,
-                        enabled = !isBotTurn,
-                        draggable = !isBotTurn && gameState.stage == TurnStage.DRAW_OR_TAKE,
+                        enabled = !isBotTurn && !isOpeningReveal,
+                        draggable = !isBotTurn && !isOpeningReveal && gameState.stage == TurnStage.DRAW_OR_TAKE,
                         onPositioned = { discardBounds = it },
                         onDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
                         onDrag = { dragAmount ->
@@ -629,7 +675,7 @@ private fun SkyjoGameScreen(
             PlayerBoard(
                 player = humanPlayer,
                 title = "${humanPlayer.name} | Score ${humanPlayer.score}",
-                enabled = !isBotTurn,
+                enabled = !isBotTurn || isOpeningReveal,
                 compact = false,
                 modifier = Modifier.weight(1f, fill = false),
                 onCardPositioned = { index, bounds ->
@@ -639,6 +685,7 @@ private fun SkyjoGameScreen(
                 },
                 onCardClick = { index ->
                     when (gameState.stage) {
+                        TurnStage.OPENING_REVEAL -> dispatch(Action.RevealGrid(index))
                         TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
                         TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
                         TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
@@ -648,7 +695,7 @@ private fun SkyjoGameScreen(
 
             ActionButtons(
                 gameState = gameState,
-                enabled = !isBotTurn,
+                enabled = !isBotTurn && !isOpeningReveal,
                 onDiscard = { dispatch(Action.DiscardDrawnCard) },
                 onEndTurn = { dispatch(Action.EndTurn) },
                 onNewGame = {
@@ -1021,6 +1068,8 @@ private const val BOT_CARD_DRAG_DURATION_MS = 1100L
 private const val BOT_AFTER_CARD_DRAG_DELAY_MS = 450L
 private const val BOT_REVEAL_DELAY_MS = 1000L
 private const val BOT_END_TURN_DELAY_MS = 1200L
+private const val OPENING_BOT_REVEAL_DELAY_MIN_MS = 450L
+private const val OPENING_BOT_REVEAL_DELAY_MAX_MS = 1200L
 private const val SPLASH_DURATION_MS = 1200L
 
 @Composable
@@ -1112,6 +1161,16 @@ private fun messageFor(state: GameState): String {
     }
 
     return when (state.stage) {
+        TurnStage.OPENING_REVEAL -> {
+            val human = state.players.first { !it.isBot }
+            val revealed = human.grid.count { it.isRevealed }
+            val remaining = (state.openingRevealCount - revealed).coerceAtLeast(0)
+            if (remaining > 1) {
+                "Reveal $remaining cards to decide who starts."
+            } else {
+                "Reveal 1 card to decide who starts."
+            }
+        }
         TurnStage.DRAW_OR_TAKE -> "Draw from the deck or take the discard card."
         TurnStage.CHOOSE_SWAP_OR_DISCARD -> "Tap a grid card to swap, or discard and reveal one hidden card."
         TurnStage.TURN_END -> if (state.revealRequiredBeforeEndTurn) {
@@ -1196,6 +1255,8 @@ private class SavedGameStore(context: Context) {
         if (currentPlayerIndex !in players.indices) return false
         if (round < 1) return false
         if (finalTurnsRemaining < 0) return false
+        if (openingRevealCount < 2) return false
+        if (openingContenderIds.any { contenderId -> players.none { it.id == contenderId } }) return false
         if (players.any { it.grid.size != GRID_SIZE }) return false
         if (stage == TurnStage.CHOOSE_SWAP_OR_DISCARD && drawnCard == null) return false
 
@@ -1214,6 +1275,10 @@ private class SavedGameStore(context: Context) {
         .put("round", round)
         .put("roundFinisherIndex", roundFinisherIndex ?: JSONObject.NULL)
         .put("finalTurnsRemaining", finalTurnsRemaining)
+        .put("openingRevealCount", openingRevealCount)
+        .put("openingContenderIds", JSONArray().also { array ->
+            openingContenderIds.forEach { array.put(it) }
+        })
         .put("roundEnded", roundEnded)
         .put("gameEnded", gameEnded)
 
@@ -1228,6 +1293,11 @@ private class SavedGameStore(context: Context) {
         round = getInt("round"),
         roundFinisherIndex = if (isNull("roundFinisherIndex")) null else getInt("roundFinisherIndex"),
         finalTurnsRemaining = getInt("finalTurnsRemaining"),
+        openingRevealCount = optInt("openingRevealCount", 2),
+        openingContenderIds = optJSONArray("openingContenderIds")
+            ?.toList { getInt(it) }
+            ?.toSet()
+            ?: emptySet(),
         roundEnded = getBoolean("roundEnded"),
         gameEnded = getBoolean("gameEnded"),
     )

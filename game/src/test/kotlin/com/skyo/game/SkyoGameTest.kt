@@ -9,16 +9,16 @@ import kotlin.test.assertTrue
 
 class SkyoGameTest {
     @Test
-    fun `new game deals 12 cards and reveals exactly 2 per player`() {
+    fun `new game deals 12 hidden cards per player and waits for opening reveal`() {
         val state = SkyoGame.newGame(humanPlayerName = "You", botCount = 2, random = Random(7))
 
         assertEquals(3, state.players.size)
         state.players.forEach { player ->
             assertEquals(12, player.grid.size)
-            assertEquals(2, player.grid.count { it.isRevealed })
+            assertEquals(0, player.grid.count { it.isRevealed })
         }
         assertTrue(state.discardPile.single().isRevealed)
-        assertEquals(TurnStage.DRAW_OR_TAKE, state.stage)
+        assertEquals(TurnStage.OPENING_REVEAL, state.stage)
     }
 
     @Test
@@ -38,7 +38,7 @@ class SkyoGameTest {
 
     @Test
     fun `draw from deck then swap updates board and discard`() {
-        val state = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(3))
+        val state = playableNewGame(random = Random(3))
         val afterDraw = SkyoGame.reduce(state, Action.DrawFromDeck)
 
         assertEquals(TurnStage.CHOOSE_SWAP_OR_DISCARD, afterDraw.stage)
@@ -57,7 +57,7 @@ class SkyoGameTest {
 
     @Test
     fun `discard drawn card allows reveal and end turn`() {
-        val start = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(11))
+        val start = playableNewGame(random = Random(11))
         val afterDraw = SkyoGame.reduce(start, Action.DrawFromDeck)
         val afterDiscard = SkyoGame.reduce(afterDraw, Action.DiscardDrawnCard)
 
@@ -76,7 +76,7 @@ class SkyoGameTest {
 
     @Test
     fun `discard drawn card cannot end turn before revealing a hidden card`() {
-        val start = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(11))
+        val start = playableNewGame(random = Random(11))
         val afterDraw = SkyoGame.reduce(start, Action.DrawFromDeck)
         val afterDiscard = SkyoGame.reduce(afterDraw, Action.DiscardDrawnCard)
 
@@ -87,7 +87,7 @@ class SkyoGameTest {
 
     @Test
     fun `illegal action order throws`() {
-        val state = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(1))
+        val state = playableNewGame(random = Random(1))
 
         assertFailsWith<IllegalArgumentException> {
             SkyoGame.reduce(state, Action.SwapWithGrid(0))
@@ -213,7 +213,7 @@ class SkyoGameTest {
 
     @Test
     fun `no actions are allowed after round ends`() {
-        val start = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(1))
+        val start = SkyoGame.newGame(humanPlayerName = "You", botCount = 1)
         val roundOver = start.copy(roundEnded = true)
 
         assertFailsWith<IllegalArgumentException> {
@@ -221,7 +221,152 @@ class SkyoGameTest {
         }
     }
 
+    @Test
+    fun `human opening reveal resolves starting player by total revealed value`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(12, 1, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4),
+                ),
+                PlayerState(
+                    id = 1,
+                    name = "Bot 1",
+                    isBot = true,
+                    grid = gridOf(5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4)
+                        .mapIndexed { index, card ->
+                            if (index == 0 || index == 1) card.copy(isRevealed = true) else card
+                        },
+                ),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.OPENING_REVEAL,
+        )
+
+        val afterFirstReveal = SkyoGame.reduce(state, Action.RevealGrid(0))
+        assertEquals(TurnStage.OPENING_REVEAL, afterFirstReveal.stage)
+
+        val afterSecondReveal = SkyoGame.reduce(afterFirstReveal, Action.RevealGrid(1))
+        assertEquals(TurnStage.DRAW_OR_TAKE, afterSecondReveal.stage)
+        assertEquals(0, afterSecondReveal.currentPlayerIndex)
+    }
+
+    @Test
+    fun `opening reveal uses highest card when totals match`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4),
+                ),
+                PlayerState(
+                    id = 1,
+                    name = "Bot 1",
+                    isBot = true,
+                    grid = gridOf(11, 1, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4)
+                        .mapIndexed { index, card ->
+                            if (index == 0 || index == 1) card.copy(isRevealed = true) else card
+                        },
+                ),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.OPENING_REVEAL,
+        )
+
+        val afterFirstReveal = SkyoGame.reduce(state, Action.RevealGrid(0))
+        val afterSecondReveal = SkyoGame.reduce(afterFirstReveal, Action.RevealGrid(1))
+
+        assertEquals(TurnStage.DRAW_OR_TAKE, afterSecondReveal.stage)
+        assertEquals(1, afterSecondReveal.currentPlayerIndex)
+    }
+
+    @Test
+    fun `exact opening tie requires another reveal from tied players`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(6, 6, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4),
+                ),
+                PlayerState(
+                    id = 1,
+                    name = "Bot 1",
+                    isBot = true,
+                    grid = gridOf(6, 6, -2, 4, 4, 4, 4, 4, 4, 4, 4, 4)
+                        .mapIndexed { index, card ->
+                            if (index == 0 || index == 1) card.copy(isRevealed = true) else card
+                        },
+                ),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.OPENING_REVEAL,
+        )
+
+        val afterFirstReveal = SkyoGame.reduce(state, Action.RevealGrid(0))
+        val tied = SkyoGame.reduce(afterFirstReveal, Action.RevealGrid(1))
+
+        assertEquals(TurnStage.OPENING_REVEAL, tied.stage)
+        assertEquals(3, tied.openingRevealCount)
+        assertEquals(setOf(0, 1), tied.openingContenderIds)
+        assertEquals(2, tied.players[1].grid.count { it.isRevealed })
+
+        val botRevealed = SkyoGame.reduce(tied, Action.RevealOpeningBotGrid(playerId = 1, index = 2))
+        assertEquals(3, botRevealed.players[1].grid.count { it.isRevealed })
+
+        val resolved = SkyoGame.reduce(botRevealed, Action.RevealGrid(2))
+        assertEquals(TurnStage.DRAW_OR_TAKE, resolved.stage)
+        assertEquals(0, resolved.currentPlayerIndex)
+    }
+
+    @Test
+    fun `bot opening reveal action flips one bot card without resolving early`() {
+        val state = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(4))
+        val bot = state.players.single { it.isBot }
+        val revealIndex = SkyoGame.chooseOpeningBotRevealIndices(bot, state.openingRevealCount, Random(4)).first()
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealOpeningBotGrid(bot.id, revealIndex))
+
+        assertTrue(afterReveal.players.single { it.isBot }.grid[revealIndex].isRevealed)
+        assertEquals(TurnStage.OPENING_REVEAL, afterReveal.stage)
+        assertEquals(1, afterReveal.players.single { it.isBot }.grid.count { it.isRevealed })
+    }
+
     private fun gridOf(vararg values: Int, revealed: Boolean = false): List<Card> {
         return values.map { Card(value = it, isRevealed = revealed) }
+    }
+
+    private fun playableNewGame(random: Random): GameState {
+        val state = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = random)
+        val players = state.players.map { player ->
+            if (player.isBot) {
+                player
+            } else {
+                player.copy(
+                    grid = player.grid.mapIndexed { index, card ->
+                        if (index < 2) card.copy(isRevealed = true) else card
+                    },
+                )
+            }
+        }
+
+        return state.copy(
+            players = players,
+            currentPlayerIndex = 0,
+            stage = TurnStage.DRAW_OR_TAKE,
+            openingRevealCount = 2,
+            openingContenderIds = emptySet(),
+        )
     }
 }

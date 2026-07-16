@@ -28,12 +28,7 @@ object SkyoGame {
             val dealt = shuffledDeck.subList(pointer, pointer + GRID_SIZE).map { it.copy(isRevealed = false) }
             pointer += GRID_SIZE
 
-            val revealIndices = (0 until GRID_SIZE).shuffled(random).take(2).toSet()
-            val grid = dealt.mapIndexed { index, card ->
-                if (index in revealIndices) card.copy(isRevealed = true) else card
-            }
-
-            player.copy(grid = grid)
+            player.copy(grid = dealt)
         }
 
         val discardStart = shuffledDeck[pointer].copy(isRevealed = true)
@@ -44,7 +39,7 @@ object SkyoGame {
             deck = shuffledDeck.drop(pointer),
             discardPile = listOf(discardStart),
             currentPlayerIndex = 0,
-            stage = TurnStage.DRAW_OR_TAKE,
+            stage = TurnStage.OPENING_REVEAL,
         )
     }
 
@@ -54,7 +49,37 @@ object SkyoGame {
         is Action.SwapWithGrid -> swapWithGrid(requireRoundInProgress(state), action.index)
         Action.DiscardDrawnCard -> discardDrawnCard(requireRoundInProgress(state))
         is Action.RevealGrid -> revealGrid(requireRoundInProgress(state), action.index)
+        is Action.RevealOpeningBotGrid -> revealOpeningBotGrid(requireRoundInProgress(state), action.playerId, action.index)
         Action.EndTurn -> endTurn(requireRoundInProgress(state))
+    }
+
+    fun chooseOpeningBotRevealIndices(
+        player: PlayerState,
+        targetRevealCount: Int,
+        random: Random = Random.Default,
+    ): List<Int> {
+        require(player.isBot) { "Only bots use automatic opening reveal choices" }
+
+        val revealedCount = player.grid.count { it.isRevealed }
+        val needed = targetRevealCount - revealedCount
+        if (needed <= 0) {
+            return emptyList()
+        }
+
+        val hiddenIndices = player.grid
+            .withIndex()
+            .filter { !it.value.isCleared && !it.value.isRevealed }
+            .map { it.index }
+
+        if (hiddenIndices.size <= needed) {
+            return hiddenIndices
+        }
+
+        return if (needed >= 2 && revealedCount == 0) {
+            weightedOpeningPair(hiddenIndices, random).toList().shuffled(random).take(needed)
+        } else {
+            hiddenIndices.shuffled(random).take(needed)
+        }
     }
 
     fun scoreGrid(grid: List<Card>): Int {
@@ -124,6 +149,10 @@ object SkyoGame {
     }
 
     private fun revealGrid(state: GameState, index: Int): GameState {
+        if (state.stage == TurnStage.OPENING_REVEAL) {
+            return revealHumanOpeningGrid(state, index)
+        }
+
         require(state.stage == TurnStage.TURN_END) { "Can only reveal a grid card at turn end" }
         require(index in 0 until GRID_SIZE) { "Grid index out of bounds" }
 
@@ -144,6 +173,57 @@ object SkyoGame {
                 revealRequiredBeforeEndTurn = false,
             )
         )
+    }
+
+    private fun revealHumanOpeningGrid(state: GameState, index: Int): GameState {
+        require(index in 0 until GRID_SIZE) { "Grid index out of bounds" }
+
+        val humanIndex = state.players.indexOfFirst { !it.isBot }
+        require(humanIndex >= 0) { "No human player found" }
+
+        val human = state.players[humanIndex]
+        val contenders = openingContenderIds(state)
+        require(human.id in contenders) { "Opening tie-break does not need another card from you" }
+        require(human.grid.count { it.isRevealed } < state.openingRevealCount) {
+            "You already revealed enough cards for this tie-break"
+        }
+        require(!human.grid[index].isCleared) { "Cannot reveal a cleared card slot" }
+        require(!human.grid[index].isRevealed) { "Card already revealed" }
+
+        val updatedGrid = human.grid.toMutableList().also {
+            it[index] = it[index].copy(isRevealed = true)
+        }
+        val updatedPlayers = state.players.toMutableList().also {
+            it[humanIndex] = human.copy(grid = updatedGrid)
+        }
+
+        return advanceOpeningReveal(state.copy(players = updatedPlayers))
+    }
+
+    private fun revealOpeningBotGrid(state: GameState, playerId: Int, index: Int): GameState {
+        require(state.stage == TurnStage.OPENING_REVEAL) { "Bot opening cards can only be revealed during opening reveal" }
+        require(index in 0 until GRID_SIZE) { "Grid index out of bounds" }
+
+        val playerIndex = state.players.indexOfFirst { it.id == playerId }
+        require(playerIndex >= 0) { "Player not found" }
+
+        val player = state.players[playerIndex]
+        require(player.isBot) { "Only bots can use bot opening reveal" }
+        require(player.id in openingContenderIds(state)) { "This bot is not in the opening tie-break" }
+        require(player.grid.count { it.isRevealed } < state.openingRevealCount) {
+            "${player.name} already revealed enough cards for this tie-break"
+        }
+        require(!player.grid[index].isCleared) { "Cannot reveal a cleared card slot" }
+        require(!player.grid[index].isRevealed) { "Card already revealed" }
+
+        val updatedGrid = player.grid.toMutableList().also {
+            it[index] = it[index].copy(isRevealed = true)
+        }
+        val updatedPlayers = state.players.toMutableList().also {
+            it[playerIndex] = player.copy(grid = updatedGrid)
+        }
+
+        return advanceOpeningReveal(state.copy(players = updatedPlayers))
     }
 
     private fun endTurn(state: GameState): GameState {
@@ -262,6 +342,102 @@ object SkyoGame {
     }
 
     private fun nextPlayerIndex(state: GameState): Int = (state.currentPlayerIndex + 1) % state.players.size
+
+    private fun advanceOpeningReveal(state: GameState): GameState {
+        val contenders = openingContenderIds(state)
+        val contenderPlayers = state.players.filter { it.id in contenders }
+
+        if (contenderPlayers.any { it.grid.count { card -> card.isRevealed } < state.openingRevealCount }) {
+            return state
+        }
+
+        val ranked = contenderPlayers.map { player -> player to openingRank(player) }
+        val bestRank = ranked.maxOf { it.second }
+        val leaders = ranked.filter { it.second == bestRank }.map { it.first }
+
+        if (leaders.size == 1) {
+            val startingPlayerIndex = state.players.indexOfFirst { it.id == leaders.single().id }
+            return state.copy(
+                currentPlayerIndex = startingPlayerIndex,
+                stage = TurnStage.DRAW_OR_TAKE,
+                openingRevealCount = 2,
+                openingContenderIds = emptySet(),
+            )
+        }
+
+        if (leaders.all { leader -> leader.grid.none { !it.isCleared && !it.isRevealed } }) {
+            val startingPlayerIndex = state.players.indexOfFirst { it.id == leaders.minBy { leader -> leader.id }.id }
+            return state.copy(
+                currentPlayerIndex = startingPlayerIndex,
+                stage = TurnStage.DRAW_OR_TAKE,
+                openingRevealCount = 2,
+                openingContenderIds = emptySet(),
+            )
+        }
+
+        return state.copy(
+            openingRevealCount = state.openingRevealCount + 1,
+            openingContenderIds = leaders.map { it.id }.toSet(),
+        )
+    }
+
+    private fun openingContenderIds(state: GameState): Set<Int> =
+        state.openingContenderIds.ifEmpty { state.players.map { it.id }.toSet() }
+
+    private fun openingRank(player: PlayerState): OpeningRank {
+        val revealedValues = player.grid
+            .filter { it.isRevealed && !it.isCleared }
+            .map { it.value }
+            .sortedDescending()
+
+        return OpeningRank(revealedValues.sum(), revealedValues)
+    }
+
+    private data class OpeningRank(
+        val sum: Int,
+        val sortedValuesDescending: List<Int>,
+    ) : Comparable<OpeningRank> {
+        override fun compareTo(other: OpeningRank): Int {
+            sum.compareTo(other.sum).takeIf { it != 0 }?.let { return it }
+
+            val maxSize = maxOf(sortedValuesDescending.size, other.sortedValuesDescending.size)
+            for (index in 0 until maxSize) {
+                val left = sortedValuesDescending.getOrElse(index) { Int.MIN_VALUE }
+                val right = other.sortedValuesDescending.getOrElse(index) { Int.MIN_VALUE }
+                left.compareTo(right).takeIf { it != 0 }?.let { return it }
+            }
+
+            return 0
+        }
+    }
+
+    private fun weightedOpeningPair(indices: List<Int>, random: Random): Set<Int> {
+        val weightedPairs = buildList {
+            for (firstPosition in indices.indices) {
+                for (secondPosition in firstPosition + 1 until indices.size) {
+                    val first = indices[firstPosition]
+                    val second = indices[secondPosition]
+                    val weight = openingPairWeight(first, second)
+                    repeat(weight) { add(setOf(first, second)) }
+                }
+            }
+        }
+
+        return weightedPairs.random(random)
+    }
+
+    private fun openingPairWeight(first: Int, second: Int): Int {
+        val firstRow = first / GRID_COLUMNS
+        val firstColumn = first % GRID_COLUMNS
+        val secondRow = second / GRID_COLUMNS
+        val secondColumn = second % GRID_COLUMNS
+
+        return when {
+            firstColumn == secondColumn && kotlin.math.abs(firstRow - secondRow) == 1 -> 8
+            firstRow == secondRow && kotlin.math.abs(firstColumn - secondColumn) == 1 -> 3
+            else -> 1
+        }
+    }
 
     private fun defaultDeck(): List<Card> {
         val values = listOf(
