@@ -7,7 +7,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,13 +25,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,7 +44,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
@@ -57,12 +51,14 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.skyo.game.Action
 import com.skyo.game.Card
 import com.skyo.game.GameState
+import com.skyo.game.PlayerState
 import com.skyo.game.SkyoGame
 import com.skyo.game.TurnStage
 import kotlinx.coroutines.delay
@@ -122,7 +118,6 @@ private fun SkyjoSplashScreen() {
 private fun SkyjoGameScreen() {
     var gameState by remember { mutableStateOf(SkyoGame.newGame(humanPlayerName = "You", botCount = 1)) }
     var message by remember { mutableStateOf("Draw from the deck or take the discard card.") }
-    var showOpponents by remember { mutableStateOf(false) }
     var discardBounds by remember { mutableStateOf(Rect.Zero) }
     var drawnCardBounds by remember { mutableStateOf(Rect.Zero) }
     var botDropTarget by remember { mutableStateOf<Rect?>(null) }
@@ -141,14 +136,11 @@ private fun SkyjoGameScreen() {
 
     val player = gameState.players[gameState.currentPlayerIndex]
     val isBotTurn = player.isBot
+    val humanPlayer = gameState.players.first { !it.isBot }
+    val opponent = gameState.players.firstOrNull { it.isBot }
 
     LaunchedEffect(gameState.currentPlayerIndex, gameState.stage, gameState.roundEnded, gameState.gameEnded) {
-        if (!isBotTurn) {
-            showOpponents = false
-        }
-
         if (isBotTurn && !gameState.roundEnded && !gameState.gameEnded) {
-            showOpponents = true
             var nextState = gameState
 
             if (nextState.stage == TurnStage.DRAW_OR_TAKE) {
@@ -210,7 +202,8 @@ private fun SkyjoGameScreen() {
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -238,11 +231,26 @@ private fun SkyjoGameScreen() {
             )
         }
 
+        if (opponent != null) {
+            PlayerBoard(
+                player = opponent,
+                title = "${opponent.name} | Score ${opponent.score}",
+                enabled = false,
+                compact = true,
+                onCardPositioned = { index, bounds ->
+                    if (player.id == opponent.id) {
+                        gridBounds[index] = bounds
+                    }
+                },
+                onCardClick = {},
+            )
+        }
+
         Text(
             text = message,
             modifier = Modifier.fillMaxWidth(),
             color = Color(0xFF41534F),
-            fontSize = 14.sp,
+            fontSize = 13.sp,
         )
 
         Row(
@@ -253,14 +261,17 @@ private fun SkyjoGameScreen() {
             PileCard(
                 label = "Deck",
                 value = gameState.deck.size.toString(),
+                compact = true,
                 enabled = !isBotTurn,
                 onClick = { dispatch(Action.DrawFromDeck) },
             )
+            SpacerWidth()
             val discard = gameState.discardPile.lastOrNull()
             PileCard(
                 label = "Discard",
                 value = discard?.value?.toString() ?: "-",
                 imageRes = discard?.let { cardImageRes(it.value) },
+                compact = true,
                 enabled = !isBotTurn,
                 onPositioned = { discardBounds = it },
                 onClick = { dispatch(Action.DrawFromDiscard) },
@@ -285,38 +296,25 @@ private fun SkyjoGameScreen() {
             )
         }
 
-        OpponentSection(
-            gameState = gameState,
-            expanded = showOpponents,
-            onToggle = { showOpponents = !showOpponents },
-        )
-
-        if (!showOpponents) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(4),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                userScrollEnabled = false,
-            ) {
-                itemsIndexed(player.grid) { index, card ->
-                    BoardCard(
-                        card = card,
-                        enabled = !isBotTurn,
-                        onPositioned = { bounds -> gridBounds[index] = bounds },
-                        onClick = {
-                            when (gameState.stage) {
-                                TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
-                                TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
-                                TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
-                            }
-                        },
-                    )
+        PlayerBoard(
+            player = humanPlayer,
+            title = "${humanPlayer.name} | Score ${humanPlayer.score}",
+            enabled = !isBotTurn,
+            compact = false,
+            modifier = Modifier.weight(1f, fill = false),
+            onCardPositioned = { index, bounds ->
+                if (player.id == humanPlayer.id) {
+                    gridBounds[index] = bounds
                 }
-            }
-        }
+            },
+            onCardClick = { index ->
+                when (gameState.stage) {
+                    TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
+                    TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
+                    TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
+                }
+            },
+        )
 
         ActionButtons(
             gameState = gameState,
@@ -326,7 +324,8 @@ private fun SkyjoGameScreen() {
             onNewGame = {
                 gameState = SkyoGame.newGame(humanPlayerName = "You", botCount = 1)
                 message = "Draw from the deck or take the discard card."
-                showOpponents = false
+                gridBounds.clear()
+                botDropTarget = null
             },
         )
     }
@@ -336,11 +335,12 @@ private fun SkyjoGameScreen() {
 private fun BoardCard(
     card: Card,
     enabled: Boolean,
+    modifier: Modifier = Modifier,
     onPositioned: (Rect) -> Unit,
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .aspectRatio(0.68f)
             .clip(RoundedCornerShape(6.dp))
@@ -394,6 +394,7 @@ private fun PileCard(
     label: String,
     value: String,
     imageRes: Int? = null,
+    compact: Boolean = false,
     enabled: Boolean = true,
     onPositioned: (Rect) -> Unit = {},
     onClick: () -> Unit,
@@ -401,7 +402,10 @@ private fun PileCard(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(width = 82.dp, height = 118.dp)
+                .size(
+                    width = if (compact) 62.dp else 82.dp,
+                    height = if (compact) 90.dp else 118.dp,
+                )
                 .clip(RoundedCornerShape(6.dp))
                 .onGloballyPositioned { onPositioned(it.boundsInRoot()) }
                 .clickable(enabled = enabled, onClick = onClick),
@@ -421,7 +425,7 @@ private fun PileCard(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = if (label == "Deck") "$label ($value)" else label,
-            fontSize = 13.sp,
+            fontSize = if (compact) 12.sp else 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFF143D35),
         )
@@ -532,97 +536,70 @@ private fun DrawnCard(
 }
 
 @Composable
-private fun OpponentSection(
-    gameState: GameState,
-    expanded: Boolean,
-    onToggle: () -> Unit,
+private fun PlayerBoard(
+    player: PlayerState,
+    title: String,
+    enabled: Boolean,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+    onCardPositioned: (Int, Rect) -> Unit,
+    onCardClick: (Int) -> Unit,
 ) {
-    val currentPlayer = gameState.players[gameState.currentPlayerIndex]
-    val opponents = if (currentPlayer.isBot) {
-        listOf(currentPlayer)
-    } else {
-        gameState.players.filter { it.isBot }
-    }
-
     Column(
-        modifier = Modifier
+        modifier = modifier
+            .widthIn(max = if (compact) 188.dp else 318.dp)
             .fillMaxWidth()
-            .background(Color(0xFFECE7DC), RoundedCornerShape(8.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .background(
+                color = if (compact) Color.Transparent else Color(0xFFFFA3B7),
+                shape = RoundedCornerShape(8.dp),
+            )
+            .padding(if (compact) 0.dp else 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 8.dp),
     ) {
-        if (expanded) {
-            opponents.forEach { opponent ->
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "${opponent.name} | Score ${opponent.score}",
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF143D35),
-                    )
-                    MiniGrid(cards = opponent.grid)
-                }
-            }
-        }
-
-        Row(
+        Text(
+            text = title,
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            Button(
-                onClick = onToggle,
-                modifier = Modifier.size(42.dp),
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6C4FB3)),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-            ) {
-                EyeIcon()
-            }
-        }
-    }
-}
-
-@Composable
-private fun EyeIcon() {
-    Canvas(modifier = Modifier.size(22.dp)) {
-        drawOval(
-            color = Color.White,
-            style = Stroke(width = 2.5f),
+            fontSize = if (compact) 11.sp else 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF143D35),
         )
-        drawCircle(
-            color = Color.White,
-            radius = size.minDimension * 0.18f,
-            center = Offset(size.width / 2f, size.height / 2f),
+        BoardGrid(
+            cards = player.grid,
+            enabled = enabled,
+            spacing = if (compact) 3.dp else 8.dp,
+            onCardPositioned = onCardPositioned,
+            onCardClick = onCardClick,
         )
     }
 }
 
 @Composable
-private fun MiniGrid(cards: List<Card>) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        cards.chunked(4).forEach { rowCards ->
+private fun BoardGrid(
+    cards: List<Card>,
+    enabled: Boolean,
+    spacing: Dp,
+    onCardPositioned: (Int, Rect) -> Unit,
+    onCardClick: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(spacing),
+    ) {
+        cards.chunked(4).forEachIndexed { rowIndex, rowCards ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(spacing),
             ) {
-                rowCards.forEach { card ->
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(0.68f)
-                            .clip(RoundedCornerShape(4.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        when {
-                            card.isCleared -> ClearedSlot()
-                            card.isRevealed -> Image(
-                                painter = painterResource(cardImageRes(card.value)),
-                                contentDescription = "Opponent card ${card.value}",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit,
-                            )
-                            else -> CardBack()
-                        }
-                    }
+                rowCards.forEachIndexed { columnIndex, card ->
+                    val index = rowIndex * 4 + columnIndex
+                    BoardCard(
+                        card = card,
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f),
+                        onPositioned = { bounds -> onCardPositioned(index, bounds) },
+                        onClick = { onCardClick(index) },
+                    )
                 }
             }
         }
