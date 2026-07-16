@@ -28,6 +28,7 @@ data class GameState(
     val currentPlayerIndex: Int,
     val stage: TurnStage,
     val drawnCard: Card? = null,
+    val revealRequiredBeforeEndTurn: Boolean = false,
     val round: Int = 1,
     val roundFinisherIndex: Int? = null,
     val finalTurnsRemaining: Int = 0,

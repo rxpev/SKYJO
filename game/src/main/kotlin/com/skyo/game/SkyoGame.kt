@@ -69,6 +69,7 @@ object SkyoGame {
         return state.copy(
             deck = state.deck.drop(1),
             drawnCard = drawn,
+            revealRequiredBeforeEndTurn = false,
             stage = TurnStage.CHOOSE_SWAP_OR_DISCARD,
         )
     }
@@ -80,6 +81,7 @@ object SkyoGame {
         return state.copy(
             discardPile = state.discardPile.dropLast(1),
             drawnCard = drawn,
+            revealRequiredBeforeEndTurn = false,
             stage = TurnStage.CHOOSE_SWAP_OR_DISCARD,
         )
     }
@@ -102,6 +104,7 @@ object SkyoGame {
                 players = updatedPlayers,
                 discardPile = state.discardPile + swappedOut,
                 drawnCard = null,
+                revealRequiredBeforeEndTurn = false,
                 stage = TurnStage.TURN_END,
             )
         )
@@ -110,9 +113,12 @@ object SkyoGame {
     private fun discardDrawnCard(state: GameState): GameState {
         require(state.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD) { "Must choose swap or discard after drawing" }
         val drawn = requireNotNull(state.drawnCard) { "No drawn card available" }
+        val current = state.players[state.currentPlayerIndex]
+        val hasHiddenGridCard = current.grid.any { !it.isCleared && !it.isRevealed }
         return state.copy(
             discardPile = state.discardPile + drawn.copy(isRevealed = true),
             drawnCard = null,
+            revealRequiredBeforeEndTurn = hasHiddenGridCard,
             stage = TurnStage.TURN_END,
         )
     }
@@ -132,11 +138,17 @@ object SkyoGame {
             it[state.currentPlayerIndex] = current.copy(grid = updatedGrid)
         }
 
-        return clearCompletedColumns(state.copy(players = updatedPlayers))
+        return clearCompletedColumns(
+            state.copy(
+                players = updatedPlayers,
+                revealRequiredBeforeEndTurn = false,
+            )
+        )
     }
 
     private fun endTurn(state: GameState): GameState {
         require(state.stage == TurnStage.TURN_END) { "Turn can only end from TURN_END stage" }
+        require(!state.revealRequiredBeforeEndTurn) { "Reveal one hidden card before ending your turn" }
 
         val currentPlayerFinished = state.players[state.currentPlayerIndex].grid
             .filterNot { it.isCleared }
@@ -146,6 +158,7 @@ object SkyoGame {
             return state.copy(
                 currentPlayerIndex = nextPlayerIndex(state),
                 stage = TurnStage.DRAW_OR_TAKE,
+                revealRequiredBeforeEndTurn = false,
                 roundFinisherIndex = state.currentPlayerIndex,
                 finalTurnsRemaining = state.players.size - 1,
             )
@@ -160,6 +173,7 @@ object SkyoGame {
             return state.copy(
                 currentPlayerIndex = nextPlayerIndex(state),
                 stage = TurnStage.DRAW_OR_TAKE,
+                revealRequiredBeforeEndTurn = false,
                 finalTurnsRemaining = finalTurnsRemaining,
             )
         }
@@ -167,6 +181,7 @@ object SkyoGame {
         return state.copy(
             currentPlayerIndex = nextPlayerIndex(state),
             stage = TurnStage.DRAW_OR_TAKE,
+            revealRequiredBeforeEndTurn = false,
         )
     }
 
@@ -231,6 +246,7 @@ object SkyoGame {
         return state.copy(
             players = scoredPlayers.map { it.copy(hasLost = gameEnded && it.score >= MAX_SCORE) },
             drawnCard = null,
+            revealRequiredBeforeEndTurn = false,
             currentPlayerIndex = finishingPlayerIndex,
             stage = TurnStage.TURN_END,
             finalTurnsRemaining = 0,

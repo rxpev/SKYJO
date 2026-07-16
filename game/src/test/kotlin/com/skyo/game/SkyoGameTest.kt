@@ -62,6 +62,7 @@ class SkyoGameTest {
         val afterDiscard = SkyoGame.reduce(afterDraw, Action.DiscardDrawnCard)
 
         assertEquals(TurnStage.TURN_END, afterDiscard.stage)
+        assertTrue(afterDiscard.revealRequiredBeforeEndTurn)
 
         val hiddenIndex = afterDiscard.players[0].grid.indexOfFirst { !it.isRevealed }
         assertTrue(hiddenIndex >= 0)
@@ -71,6 +72,17 @@ class SkyoGameTest {
         val afterEnd = SkyoGame.reduce(afterReveal, Action.EndTurn)
         assertEquals(1, afterEnd.currentPlayerIndex)
         assertEquals(TurnStage.DRAW_OR_TAKE, afterEnd.stage)
+    }
+
+    @Test
+    fun `discard drawn card cannot end turn before revealing a hidden card`() {
+        val start = SkyoGame.newGame(humanPlayerName = "You", botCount = 1, random = Random(11))
+        val afterDraw = SkyoGame.reduce(start, Action.DrawFromDeck)
+        val afterDiscard = SkyoGame.reduce(afterDraw, Action.DiscardDrawnCard)
+
+        assertFailsWith<IllegalArgumentException> {
+            SkyoGame.reduce(afterDiscard, Action.EndTurn)
+        }
     }
 
     @Test

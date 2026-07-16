@@ -834,7 +834,9 @@ private fun ActionButtons(
         }
         Button(
             onClick = onEndTurn,
-            enabled = enabled && gameState.stage == TurnStage.TURN_END,
+            enabled = enabled &&
+                gameState.stage == TurnStage.TURN_END &&
+                !gameState.revealRequiredBeforeEndTurn,
             modifier = Modifier.weight(1f),
         ) {
             Text("End Turn")
@@ -902,7 +904,11 @@ private fun messageFor(state: GameState): String {
     return when (state.stage) {
         TurnStage.DRAW_OR_TAKE -> "Draw from the deck or take the discard card."
         TurnStage.CHOOSE_SWAP_OR_DISCARD -> "Tap a grid card to swap, or discard and reveal one hidden card."
-        TurnStage.TURN_END -> "Reveal one card if you discarded, then end your turn."
+        TurnStage.TURN_END -> if (state.revealRequiredBeforeEndTurn) {
+            "Reveal one hidden card before ending your turn."
+        } else {
+            "End your turn."
+        }
     }
 }
 
