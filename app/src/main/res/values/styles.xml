@@ -1,4 +1,6 @@
 <resources>
+    <color name="appicon_background">#F4A5C9</color>
+
     <style name="Theme.Skyjo" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@drawable/splash_screen</item>
         <item name="android:windowLightStatusBar">false</item>
