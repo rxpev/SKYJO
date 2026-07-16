@@ -1,6 +1,9 @@
 package com.skyo.app
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
@@ -11,6 +14,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,10 +29,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,10 +49,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +63,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.skyo.game.Action
 import com.skyo.game.Card
@@ -62,6 +72,8 @@ import com.skyo.game.PlayerState
 import com.skyo.game.SkyoGame
 import com.skyo.game.TurnStage
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.roundToInt
 
 private data class ActivePileDrag(
@@ -85,7 +97,7 @@ class MainActivity : ComponentActivity() {
                 if (showSplash) {
                     SkyjoSplashScreen()
                 } else {
-                    SkyjoGameScreen()
+                    SkyjoApp()
                 }
             }
         }
@@ -121,9 +133,194 @@ private fun SkyjoSplashScreen() {
 }
 
 @Composable
-private fun SkyjoGameScreen() {
-    var gameState by remember { mutableStateOf(SkyoGame.newGame(humanPlayerName = "You", botCount = 1)) }
-    var message by remember { mutableStateOf("Draw from the deck or take the discard card.") }
+private fun SkyjoApp() {
+    val context = LocalContext.current
+    val savedGames = remember(context) { SavedGameStore(context) }
+    var screen by remember { mutableStateOf<AppScreen>(AppScreen.MainMenu) }
+
+    when (val currentScreen = screen) {
+        AppScreen.MainMenu -> MainMenuScreen(
+            savedGames = savedGames,
+            onOpenGame = { gameState -> screen = AppScreen.Game(gameState) },
+        )
+        is AppScreen.Game -> SkyjoGameScreen(
+            initialGameState = currentScreen.initialGameState,
+            onGameStateChanged = { gameState -> savedGames.saveUnfinishedGame(gameState) },
+            onReturnToMenu = { screen = AppScreen.MainMenu },
+        )
+    }
+}
+
+@Composable
+private fun MainMenuScreen(
+    savedGames: SavedGameStore,
+    onOpenGame: (GameState) -> Unit,
+) {
+    var hasUnfinishedGame by remember { mutableStateOf(false) }
+    var showNewGameConfirmation by remember { mutableStateOf(false) }
+    var restoreNewGameFocus by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val newGameFocusRequester = remember { FocusRequester() }
+
+    fun refreshSavedGameAvailability() {
+        hasUnfinishedGame = savedGames.loadUnfinishedGame() != null
+    }
+
+    fun createAndOpenNewGame() {
+        val newGame = SkyoGame.newGame(humanPlayerName = "You", botCount = 1)
+        if (savedGames.replaceUnfinishedGame(newGame)) {
+            onOpenGame(newGame)
+        } else {
+            message = "Could not save the new game. Please try again."
+            refreshSavedGameAvailability()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshSavedGameAvailability()
+    }
+
+    LaunchedEffect(showNewGameConfirmation, restoreNewGameFocus) {
+        if (!showNewGameConfirmation && restoreNewGameFocus) {
+            newGameFocusRequester.requestFocus()
+            restoreNewGameFocus = false
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFFFC1D6)),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 32.dp, vertical = 64.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.icon),
+                contentDescription = "SKYJO",
+                modifier = Modifier.size(width = 260.dp, height = 100.dp),
+                contentScale = ContentScale.Fit,
+            )
+
+            Spacer(modifier = Modifier.height(56.dp))
+
+            Column(
+                modifier = Modifier.widthIn(max = 280.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                if (hasUnfinishedGame) {
+                    Button(
+                        onClick = {
+                            val savedGame = savedGames.loadUnfinishedGame()
+                            if (savedGame == null) {
+                                refreshSavedGameAvailability()
+                            } else {
+                                onOpenGame(savedGame)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Continue Game")
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        message = null
+                        if (savedGames.loadUnfinishedGame() == null) {
+                            refreshSavedGameAvailability()
+                            createAndOpenNewGame()
+                        } else {
+                            hasUnfinishedGame = true
+                            showNewGameConfirmation = true
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(newGameFocusRequester),
+                ) {
+                    Text("New Game")
+                }
+
+                message?.let {
+                    Text(
+                        text = it,
+                        color = Color(0xFF41534F),
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+        }
+    }
+
+    if (showNewGameConfirmation) {
+        NewGameConfirmationDialog(
+            onConfirm = {
+                showNewGameConfirmation = false
+                restoreNewGameFocus = false
+                createAndOpenNewGame()
+            },
+            onDismiss = {
+                showNewGameConfirmation = false
+                restoreNewGameFocus = true
+                refreshSavedGameAvailability()
+            },
+        )
+    }
+}
+
+@Composable
+private fun NewGameConfirmationDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dialogFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        dialogFocusRequester.requestFocus()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+        ),
+        title = { Text("Start a new game?") },
+        text = {
+            Text("Another game is currently in progress. Starting a new game will replace it. Are you sure you want to continue?")
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier
+                    .focusRequester(dialogFocusRequester)
+                    .focusable(),
+            ) {
+                Text("Create New Game")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Go Back")
+            }
+        },
+    )
+}
+
+@Composable
+private fun SkyjoGameScreen(
+    initialGameState: GameState,
+    onGameStateChanged: (GameState) -> Unit,
+    onReturnToMenu: () -> Unit,
+) {
+    var gameState by remember(initialGameState) { mutableStateOf(initialGameState) }
+    var message by remember(initialGameState) { mutableStateOf(messageFor(initialGameState)) }
     var deckBounds by remember { mutableStateOf(Rect.Zero) }
     var discardBounds by remember { mutableStateOf(Rect.Zero) }
     var drawnCardBounds by remember { mutableStateOf(Rect.Zero) }
@@ -132,10 +329,17 @@ private fun SkyjoGameScreen() {
     var botDropTarget by remember { mutableStateOf<Rect?>(null) }
     val gridBounds = remember { mutableStateMapOf<Int, Rect>() }
 
+    fun setGameState(nextState: GameState) {
+        gameState = nextState
+        onGameStateChanged(nextState)
+    }
+
+    BackHandler(onBack = onReturnToMenu)
+
     fun dispatch(action: Action) {
         runCatching { SkyoGame.reduce(gameState, action) }
             .onSuccess { nextState ->
-                gameState = nextState
+                setGameState(nextState)
                 message = messageFor(nextState)
                 if (nextState.stage != TurnStage.CHOOSE_SWAP_OR_DISCARD) {
                     humanHeldCardCameFromDeck = false
@@ -161,7 +365,7 @@ private fun SkyjoGameScreen() {
         runCatching { SkyoGame.reduce(gameState, action) }
             .onSuccess { nextState ->
                 val drawn = nextState.drawnCard ?: return@onSuccess
-                gameState = nextState
+                setGameState(nextState)
                 activePileDrag = ActivePileDrag(
                     card = drawn,
                     sourceBounds = sourceBounds,
@@ -189,7 +393,7 @@ private fun SkyjoGameScreen() {
                 message = "${player.name} is choosing a pile..."
                 delay(BOT_DECISION_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, drawAction)
-                gameState = nextState
+                setGameState(nextState)
                 humanHeldCardCameFromDeck = false
                 message = if (drawAction == Action.DrawFromDiscard) {
                     "${player.name} took the discard card."
@@ -209,7 +413,7 @@ private fun SkyjoGameScreen() {
                         delay(BOT_CARD_DRAG_DURATION_MS + BOT_AFTER_CARD_DRAG_DELAY_MS)
                     }
                     nextState = SkyoGame.reduce(nextState, Action.SwapWithGrid(swapIndex))
-                    gameState = nextState
+                    setGameState(nextState)
                     humanHeldCardCameFromDeck = false
                     botDropTarget = null
                     message = "${player.name} swapped ${drawn.value} into slot ${swapIndex + 1}."
@@ -220,14 +424,14 @@ private fun SkyjoGameScreen() {
                         delay(BOT_CARD_DRAG_DURATION_MS + BOT_AFTER_CARD_DRAG_DELAY_MS)
                     }
                     nextState = SkyoGame.reduce(nextState, Action.DiscardDrawnCard)
-                    gameState = nextState
+                    setGameState(nextState)
                     humanHeldCardCameFromDeck = false
                     botDropTarget = null
                     message = "${player.name} discarded the drawn card."
                     delay(BOT_REVEAL_DELAY_MS)
                     chooseBotRevealIndex(nextState)?.let { revealIndex ->
                         nextState = SkyoGame.reduce(nextState, Action.RevealGrid(revealIndex))
-                        gameState = nextState
+                        setGameState(nextState)
                         message = "${player.name} revealed slot ${revealIndex + 1}."
                     }
                 }
@@ -236,7 +440,7 @@ private fun SkyjoGameScreen() {
             if (nextState.stage == TurnStage.TURN_END) {
                 delay(BOT_END_TURN_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, Action.EndTurn)
-                gameState = nextState
+                setGameState(nextState)
                 message = messageFor(nextState)
             }
         }
@@ -272,11 +476,19 @@ private fun SkyjoGameScreen() {
                     )
                 }
 
-                Text(
-                    text = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF143D35),
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF143D35),
+                    )
+                    TextButton(onClick = onReturnToMenu) {
+                        Text("Menu")
+                    }
+                }
             }
 
             if (opponent != null) {
@@ -363,7 +575,7 @@ private fun SkyjoGameScreen() {
                         onClick = {
                             runCatching { SkyoGame.reduce(gameState, Action.DrawFromDeck) }
                                 .onSuccess { nextState ->
-                                    gameState = nextState
+                                    setGameState(nextState)
                                     humanHeldCardCameFromDeck = true
                                     message = messageFor(nextState)
                                 }
@@ -428,12 +640,7 @@ private fun SkyjoGameScreen() {
                 onDiscard = { dispatch(Action.DiscardDrawnCard) },
                 onEndTurn = { dispatch(Action.EndTurn) },
                 onNewGame = {
-                    gameState = SkyoGame.newGame(humanPlayerName = "You", botCount = 1)
-                    message = "Draw from the deck or take the discard card."
-                    gridBounds.clear()
-                    activePileDrag = null
-                    humanHeldCardCameFromDeck = false
-                    botDropTarget = null
+                    onReturnToMenu()
                 },
             )
         }
@@ -836,7 +1043,7 @@ private fun ActionButtons(
             onClick = onNewGame,
             modifier = Modifier.weight(1f),
         ) {
-            Text("New")
+            Text("Menu")
         }
     }
 }
@@ -920,4 +1127,141 @@ private fun cardImageRes(value: Int): Int = when (value) {
     11 -> R.drawable.card_11
     12 -> R.drawable.card_12
     else -> error("Unsupported card value: $value")
+}
+
+private sealed interface AppScreen {
+    data object MainMenu : AppScreen
+    data class Game(val initialGameState: GameState) : AppScreen
+}
+
+private class SavedGameStore(context: Context) {
+    private val preferences: SharedPreferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+
+    fun loadUnfinishedGame(): GameState? {
+        val encoded = preferences.getString(KEY_ACTIVE_GAME, null) ?: return null
+        return runCatching {
+            val root = JSONObject(encoded)
+            if (root.optInt("version") != SAVE_VERSION) return null
+
+            val state = root.getJSONObject("state").toGameState()
+            if (state.gameEnded || !state.isRestorable()) {
+                clear()
+                null
+            } else {
+                state
+            }
+        }.getOrElse {
+            clear()
+            null
+        }
+    }
+
+    fun saveUnfinishedGame(state: GameState): Boolean {
+        if (state.gameEnded) {
+            return clear()
+        }
+
+        return replaceUnfinishedGame(state)
+    }
+
+    fun replaceUnfinishedGame(state: GameState): Boolean {
+        val encoded = JSONObject()
+            .put("version", SAVE_VERSION)
+            .put("state", state.toJson())
+            .toString()
+
+        return preferences.edit()
+            .putString(KEY_ACTIVE_GAME, encoded)
+            .commit()
+    }
+
+    private fun clear(): Boolean = preferences.edit()
+        .remove(KEY_ACTIVE_GAME)
+        .commit()
+
+    private fun GameState.isRestorable(): Boolean {
+        if (players.isEmpty()) return false
+        if (currentPlayerIndex !in players.indices) return false
+        if (round < 1) return false
+        if (finalTurnsRemaining < 0) return false
+        if (players.any { it.grid.size != GRID_SIZE }) return false
+        if (stage == TurnStage.CHOOSE_SWAP_OR_DISCARD && drawnCard == null) return false
+
+        val allCards = players.flatMap { it.grid } + deck + discardPile + listOfNotNull(drawnCard)
+        return allCards.all { it.value in VALID_CARD_VALUES }
+    }
+
+    private fun GameState.toJson(): JSONObject = JSONObject()
+        .put("players", players.toJsonArray { it.toJson() })
+        .put("deck", deck.toJsonArray { it.toJson() })
+        .put("discardPile", discardPile.toJsonArray { it.toJson() })
+        .put("currentPlayerIndex", currentPlayerIndex)
+        .put("stage", stage.name)
+        .put("drawnCard", drawnCard?.toJson() ?: JSONObject.NULL)
+        .put("revealRequiredBeforeEndTurn", revealRequiredBeforeEndTurn)
+        .put("round", round)
+        .put("roundFinisherIndex", roundFinisherIndex ?: JSONObject.NULL)
+        .put("finalTurnsRemaining", finalTurnsRemaining)
+        .put("roundEnded", roundEnded)
+        .put("gameEnded", gameEnded)
+
+    private fun JSONObject.toGameState(): GameState = GameState(
+        players = getJSONArray("players").toList { getJSONObject(it).toPlayerState() },
+        deck = getJSONArray("deck").toList { getJSONObject(it).toCard() },
+        discardPile = getJSONArray("discardPile").toList { getJSONObject(it).toCard() },
+        currentPlayerIndex = getInt("currentPlayerIndex"),
+        stage = TurnStage.valueOf(getString("stage")),
+        drawnCard = if (isNull("drawnCard")) null else getJSONObject("drawnCard").toCard(),
+        revealRequiredBeforeEndTurn = getBoolean("revealRequiredBeforeEndTurn"),
+        round = getInt("round"),
+        roundFinisherIndex = if (isNull("roundFinisherIndex")) null else getInt("roundFinisherIndex"),
+        finalTurnsRemaining = getInt("finalTurnsRemaining"),
+        roundEnded = getBoolean("roundEnded"),
+        gameEnded = getBoolean("gameEnded"),
+    )
+
+    private fun PlayerState.toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("name", name)
+        .put("isBot", isBot)
+        .put("grid", grid.toJsonArray { it.toJson() })
+        .put("score", score)
+        .put("hasLost", hasLost)
+
+    private fun JSONObject.toPlayerState(): PlayerState = PlayerState(
+        id = getInt("id"),
+        name = getString("name"),
+        isBot = getBoolean("isBot"),
+        grid = getJSONArray("grid").toList { getJSONObject(it).toCard() },
+        score = getInt("score"),
+        hasLost = getBoolean("hasLost"),
+    )
+
+    private fun Card.toJson(): JSONObject = JSONObject()
+        .put("value", value)
+        .put("isRevealed", isRevealed)
+        .put("isCleared", isCleared)
+
+    private fun JSONObject.toCard(): Card = Card(
+        value = getInt("value"),
+        isRevealed = getBoolean("isRevealed"),
+        isCleared = getBoolean("isCleared"),
+    )
+
+    private fun <T> List<T>.toJsonArray(transform: (T) -> JSONObject): JSONArray {
+        val array = JSONArray()
+        forEach { array.put(transform(it)) }
+        return array
+    }
+
+    private fun <T> JSONArray.toList(transform: JSONArray.(Int) -> T): List<T> =
+        List(length()) { index -> transform(index) }
+
+    private companion object {
+        private const val PREFERENCES_NAME = "skyjo_saved_games"
+        private const val KEY_ACTIVE_GAME = "active_game"
+        private const val SAVE_VERSION = 1
+        private const val GRID_SIZE = 12
+        private val VALID_CARD_VALUES = -2..12
+    }
 }
