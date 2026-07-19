@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -196,12 +197,13 @@ private fun MainMenuScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFFFC1D6)),
-        contentAlignment = Alignment.TopCenter,
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 32.dp, vertical = 64.dp),
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp)
+                .padding(top = 70.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Image(
@@ -211,12 +213,12 @@ private fun MainMenuScreen(
                 contentScale = ContentScale.Fit,
             )
 
-            Spacer(modifier = Modifier.height(56.dp))
+            Spacer(modifier = Modifier.height(44.dp))
 
             Column(
-                modifier = Modifier.widthIn(max = 280.dp),
+                modifier = Modifier.widthIn(max = 260.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 unfinishedGame?.let { savedGame ->
                     Button(
@@ -234,6 +236,7 @@ private fun MainMenuScreen(
                         Text(
                             text = "Continue Game\n${savedGame.continueGameScoreText()}",
                             textAlign = TextAlign.Center,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
@@ -266,6 +269,18 @@ private fun MainMenuScreen(
                 }
             }
         }
+
+        Text(
+            text = "v${BuildConfig.VERSION_NAME}",
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 24.dp),
+            color = Color(0x9941534F),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+        )
     }
 
     if (showNewGameConfirmation) {
@@ -287,7 +302,7 @@ private fun MainMenuScreen(
 private fun GameState.continueGameScoreText(): String {
     val humanScore = players.firstOrNull { !it.isBot }?.score ?: 0
     val botScore = players.filter { it.isBot }.sumOf { it.score }
-    return "You $humanScore vs Bot $botScore"
+    return "($humanScore-$botScore)"
 }
 
 @Composable
