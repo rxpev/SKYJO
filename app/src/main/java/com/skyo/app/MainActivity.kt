@@ -510,16 +510,23 @@ private fun SkyjoGameScreen(
                     humanHeldCardCameFromDeck = false
                     botDropTarget = null
                     message = "${player.name} discarded the drawn card."
-                    delay(BOT_REVEAL_DELAY_MS)
-                    chooseBotRevealIndex(nextState)?.let { revealIndex ->
-                        nextState = SkyoGame.reduce(nextState, Action.RevealGrid(revealIndex))
-                        setGameState(nextState)
-                        message = "${player.name} revealed slot ${revealIndex + 1}."
-                    }
                 }
             }
 
-            if (nextState.stage == TurnStage.TURN_END) {
+            if (nextState.stage == TurnStage.TURN_END && nextState.revealRequiredBeforeEndTurn) {
+                val revealIndex = chooseBotRevealIndex(nextState)
+                if (revealIndex == null) {
+                    message = messageFor(nextState)
+                    return@LaunchedEffect
+                } else {
+                    delay(BOT_REVEAL_DELAY_MS)
+                    nextState = SkyoGame.reduce(nextState, Action.RevealGrid(revealIndex))
+                    setGameState(nextState)
+                    message = "${player.name} revealed slot ${revealIndex + 1}."
+                }
+            }
+
+            if (nextState.stage == TurnStage.TURN_END && !nextState.revealRequiredBeforeEndTurn) {
                 delay(BOT_END_TURN_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, Action.EndTurn)
                 setGameState(nextState)
