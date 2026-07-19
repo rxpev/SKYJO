@@ -371,6 +371,7 @@ private fun SkyjoGameScreen(
     val gridBounds = remember { mutableStateMapOf<Int, Rect>() }
 
     fun setGameState(nextState: GameState) {
+        gridBounds.clear()
         gameState = nextState
         onGameStateChanged(nextState)
     }
@@ -1254,25 +1255,38 @@ private fun BoardGrid(
 ) {
     val cardWidth = if (compact) 46.dp else 72.dp
     val cardHeight = if (compact) 68.dp else 106.dp
+    val visibleRows = (0 until BOARD_GRID_ROWS).filter { row ->
+        (0 until BOARD_GRID_COLUMNS).any { column ->
+            !cards[row * BOARD_GRID_COLUMNS + column].isCleared
+        }
+    }
+    val visibleColumns = (0 until BOARD_GRID_COLUMNS).filter { column ->
+        (0 until BOARD_GRID_ROWS).any { row ->
+            !cards[row * BOARD_GRID_COLUMNS + column].isCleared
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(spacing),
     ) {
-        cards.chunked(4).forEachIndexed { rowIndex, rowCards ->
+        visibleRows.forEach { row ->
             Row(
                 horizontalArrangement = Arrangement.spacedBy(spacing),
             ) {
-                rowCards.forEachIndexed { columnIndex, card ->
-                    val index = rowIndex * 4 + columnIndex
-                    BoardCard(
-                        card = card,
-                        enabled = enabled,
-                        modifier = Modifier.size(width = cardWidth, height = cardHeight),
-                        onPositioned = { bounds -> onCardPositioned(index, bounds) },
-                        onClick = { onCardClick(index) },
-                    )
+                visibleColumns.forEach { column ->
+                    val index = row * BOARD_GRID_COLUMNS + column
+                    val card = cards[index]
+                    if (!card.isCleared) {
+                        BoardCard(
+                            card = card,
+                            enabled = enabled,
+                            modifier = Modifier.size(width = cardWidth, height = cardHeight),
+                            onPositioned = { bounds -> onCardPositioned(index, bounds) },
+                            onClick = { onCardClick(index) },
+                        )
+                    }
                 }
             }
         }
@@ -1291,6 +1305,8 @@ private const val OPENING_BOT_REVEAL_DELAY_MAX_MS = 1200L
 private const val SPLASH_DURATION_MS = 1200L
 private const val DOUBLE_POINTS_BADGE_ANIMATION_MS = 420L
 private const val DOUBLE_POINTS_BADGE_SETTLE_MS = 220L
+private const val BOARD_GRID_COLUMNS = 4
+private const val BOARD_GRID_ROWS = 3
 
 private fun chooseBotDrawAction(state: GameState): Action {
     val bot = state.players[state.currentPlayerIndex]
