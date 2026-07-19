@@ -28,9 +28,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -510,6 +513,26 @@ private fun SkyjoGameScreen(
         }
     }
 
+    LaunchedEffect(
+        gameState.currentPlayerIndex,
+        gameState.stage,
+        gameState.revealRequiredBeforeEndTurn,
+        gameState.roundEnded,
+        gameState.gameEnded,
+    ) {
+        if (
+            !isBotTurn &&
+            !isOpeningReveal &&
+            !gameState.roundEnded &&
+            !gameState.gameEnded &&
+            gameState.stage == TurnStage.TURN_END &&
+            !gameState.revealRequiredBeforeEndTurn
+        ) {
+            delay(HUMAN_AUTO_END_TURN_DELAY_MS)
+            dispatch(Action.EndTurn)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -549,8 +572,19 @@ private fun SkyjoGameScreen(
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF143D35),
                     )
-                    TextButton(onClick = onReturnToMenu) {
-                        Text("Menu")
+                    IconButton(
+                        onClick = onReturnToMenu,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF6147A8)),
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.home),
+                            contentDescription = "Home",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
                 }
             }
@@ -700,22 +734,6 @@ private fun SkyjoGameScreen(
                 },
             )
 
-            ActionButtons(
-                gameState = gameState,
-                enabled = !isBotTurn && !isOpeningReveal,
-                onDiscard = {
-                    val action = if (gameState.drawnCardCameFromDiscard) {
-                        Action.ReturnDrawnDiscardCard
-                    } else {
-                        Action.DiscardDrawnCard
-                    }
-                    dispatch(action)
-                },
-                onEndTurn = { dispatch(Action.EndTurn) },
-                onNewGame = {
-                    onReturnToMenu()
-                },
-            )
         }
 
         activePileDrag?.let { drag ->
@@ -1012,7 +1030,7 @@ private fun PlayerBoard(
 ) {
     Column(
         modifier = modifier
-            .widthIn(max = if (compact) 188.dp else 318.dp)
+            .widthIn(max = if (compact) 224.dp else 352.dp)
             .fillMaxWidth()
             .background(
                 color = if (compact) Color.Transparent else Color(0xFFFFA3B7),
@@ -1033,7 +1051,7 @@ private fun PlayerBoard(
             cards = player.grid,
             enabled = enabled,
             compact = compact,
-            spacing = if (compact) 3.dp else 8.dp,
+            spacing = if (compact) 4.dp else 8.dp,
             onCardPositioned = onCardPositioned,
             onCardClick = onCardClick,
         )
@@ -1049,8 +1067,8 @@ private fun BoardGrid(
     onCardPositioned: (Int, Rect) -> Unit,
     onCardClick: (Int) -> Unit,
 ) {
-    val cardWidth = if (compact) 40.dp else 58.dp
-    val cardHeight = if (compact) 59.dp else 85.dp
+    val cardWidth = if (compact) 46.dp else 72.dp
+    val cardHeight = if (compact) 68.dp else 106.dp
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1082,46 +1100,10 @@ private const val BOT_CARD_DRAG_DURATION_MS = 1100L
 private const val BOT_AFTER_CARD_DRAG_DELAY_MS = 450L
 private const val BOT_REVEAL_DELAY_MS = 1000L
 private const val BOT_END_TURN_DELAY_MS = 1200L
+private const val HUMAN_AUTO_END_TURN_DELAY_MS = 650L
 private const val OPENING_BOT_REVEAL_DELAY_MIN_MS = 450L
 private const val OPENING_BOT_REVEAL_DELAY_MAX_MS = 1200L
 private const val SPLASH_DURATION_MS = 1200L
-
-@Composable
-private fun ActionButtons(
-    gameState: GameState,
-    enabled: Boolean,
-    onDiscard: () -> Unit,
-    onEndTurn: () -> Unit,
-    onNewGame: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Button(
-            onClick = onDiscard,
-            enabled = enabled && gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
-            modifier = Modifier.weight(1f),
-        ) {
-            Text(if (gameState.drawnCardCameFromDiscard) "Return" else "Discard")
-        }
-        Button(
-            onClick = onEndTurn,
-            enabled = enabled &&
-                gameState.stage == TurnStage.TURN_END &&
-                !gameState.revealRequiredBeforeEndTurn,
-            modifier = Modifier.weight(1f),
-        ) {
-            Text("End Turn")
-        }
-        Button(
-            onClick = onNewGame,
-            modifier = Modifier.weight(1f),
-        ) {
-            Text("Menu")
-        }
-    }
-}
 
 private fun chooseBotDrawAction(state: GameState): Action {
     val bot = state.players[state.currentPlayerIndex]
