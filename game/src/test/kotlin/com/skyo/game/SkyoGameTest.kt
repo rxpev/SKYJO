@@ -87,6 +87,35 @@ class SkyoGameTest {
     }
 
     @Test
+    fun `return card taken from discard goes back to draw choice without requiring reveal`() {
+        val start = playableNewGame(random = Random(11))
+        val discard = start.discardPile.last()
+        val afterTake = SkyoGame.reduce(start, Action.DrawFromDiscard)
+
+        assertEquals(discard.value, assertNotNull(afterTake.drawnCard).value)
+        assertTrue(afterTake.drawnCardCameFromDiscard)
+        assertEquals(start.discardPile.dropLast(1), afterTake.discardPile)
+
+        val afterReturn = SkyoGame.reduce(afterTake, Action.ReturnDrawnDiscardCard)
+
+        assertEquals(TurnStage.DRAW_OR_TAKE, afterReturn.stage)
+        assertEquals(discard.value, afterReturn.discardPile.last().value)
+        assertEquals(null, afterReturn.drawnCard)
+        assertFalse(afterReturn.drawnCardCameFromDiscard)
+        assertFalse(afterReturn.revealRequiredBeforeEndTurn)
+    }
+
+    @Test
+    fun `deck draw cannot be returned to discard choice`() {
+        val start = playableNewGame(random = Random(11))
+        val afterDraw = SkyoGame.reduce(start, Action.DrawFromDeck)
+
+        assertFailsWith<IllegalArgumentException> {
+            SkyoGame.reduce(afterDraw, Action.ReturnDrawnDiscardCard)
+        }
+    }
+
+    @Test
     fun `illegal action order throws`() {
         val state = playableNewGame(random = Random(1))
 

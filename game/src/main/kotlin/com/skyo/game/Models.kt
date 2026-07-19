@@ -29,6 +29,7 @@ data class GameState(
     val currentPlayerIndex: Int,
     val stage: TurnStage,
     val drawnCard: Card? = null,
+    val drawnCardCameFromDiscard: Boolean = false,
     val revealRequiredBeforeEndTurn: Boolean = false,
     val round: Int = 1,
     val roundFinisherIndex: Int? = null,
@@ -44,6 +45,7 @@ sealed interface Action {
     data object DrawFromDiscard : Action
     data class SwapWithGrid(val index: Int) : Action
     data object DiscardDrawnCard : Action
+    data object ReturnDrawnDiscardCard : Action
     data class RevealGrid(val index: Int) : Action
     data class RevealOpeningBotGrid(val playerId: Int, val index: Int) : Action
     data object EndTurn : Action

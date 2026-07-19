@@ -365,7 +365,14 @@ private fun SkyjoGameScreen(
 
     fun handleCardDrop(center: Offset) {
         when {
-            discardBounds.contains(center) -> dispatch(Action.DiscardDrawnCard)
+            discardBounds.contains(center) -> {
+                val action = if (gameState.drawnCardCameFromDiscard) {
+                    Action.ReturnDrawnDiscardCard
+                } else {
+                    Action.DiscardDrawnCard
+                }
+                dispatch(action)
+            }
             else -> gridBounds.entries.firstOrNull { (_, bounds) -> bounds.contains(center) }
                 ?.let { (index, _) -> dispatch(Action.SwapWithGrid(index)) }
                 ?: run { message = "Drop it on the discard pile or one of your cards." }
@@ -696,7 +703,14 @@ private fun SkyjoGameScreen(
             ActionButtons(
                 gameState = gameState,
                 enabled = !isBotTurn && !isOpeningReveal,
-                onDiscard = { dispatch(Action.DiscardDrawnCard) },
+                onDiscard = {
+                    val action = if (gameState.drawnCardCameFromDiscard) {
+                        Action.ReturnDrawnDiscardCard
+                    } else {
+                        Action.DiscardDrawnCard
+                    }
+                    dispatch(action)
+                },
                 onEndTurn = { dispatch(Action.EndTurn) },
                 onNewGame = {
                     onReturnToMenu()
@@ -1089,7 +1103,7 @@ private fun ActionButtons(
             enabled = enabled && gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
             modifier = Modifier.weight(1f),
         ) {
-            Text("Discard")
+            Text(if (gameState.drawnCardCameFromDiscard) "Return" else "Discard")
         }
         Button(
             onClick = onEndTurn,
@@ -1271,6 +1285,7 @@ private class SavedGameStore(context: Context) {
         .put("currentPlayerIndex", currentPlayerIndex)
         .put("stage", stage.name)
         .put("drawnCard", drawnCard?.toJson() ?: JSONObject.NULL)
+        .put("drawnCardCameFromDiscard", drawnCardCameFromDiscard)
         .put("revealRequiredBeforeEndTurn", revealRequiredBeforeEndTurn)
         .put("round", round)
         .put("roundFinisherIndex", roundFinisherIndex ?: JSONObject.NULL)
@@ -1289,6 +1304,7 @@ private class SavedGameStore(context: Context) {
         currentPlayerIndex = getInt("currentPlayerIndex"),
         stage = TurnStage.valueOf(getString("stage")),
         drawnCard = if (isNull("drawnCard")) null else getJSONObject("drawnCard").toCard(),
+        drawnCardCameFromDiscard = optBoolean("drawnCardCameFromDiscard", false),
         revealRequiredBeforeEndTurn = getBoolean("revealRequiredBeforeEndTurn"),
         round = getInt("round"),
         roundFinisherIndex = if (isNull("roundFinisherIndex")) null else getInt("roundFinisherIndex"),

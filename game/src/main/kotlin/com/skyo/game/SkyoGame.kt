@@ -48,6 +48,7 @@ object SkyoGame {
         Action.DrawFromDiscard -> drawFromDiscard(requireRoundInProgress(state))
         is Action.SwapWithGrid -> swapWithGrid(requireRoundInProgress(state), action.index)
         Action.DiscardDrawnCard -> discardDrawnCard(requireRoundInProgress(state))
+        Action.ReturnDrawnDiscardCard -> returnDrawnDiscardCard(requireRoundInProgress(state))
         is Action.RevealGrid -> revealGrid(requireRoundInProgress(state), action.index)
         is Action.RevealOpeningBotGrid -> revealOpeningBotGrid(requireRoundInProgress(state), action.playerId, action.index)
         Action.EndTurn -> endTurn(requireRoundInProgress(state))
@@ -94,6 +95,7 @@ object SkyoGame {
         return state.copy(
             deck = state.deck.drop(1),
             drawnCard = drawn,
+            drawnCardCameFromDiscard = false,
             revealRequiredBeforeEndTurn = false,
             stage = TurnStage.CHOOSE_SWAP_OR_DISCARD,
         )
@@ -106,6 +108,7 @@ object SkyoGame {
         return state.copy(
             discardPile = state.discardPile.dropLast(1),
             drawnCard = drawn,
+            drawnCardCameFromDiscard = true,
             revealRequiredBeforeEndTurn = false,
             stage = TurnStage.CHOOSE_SWAP_OR_DISCARD,
         )
@@ -129,6 +132,7 @@ object SkyoGame {
                 players = updatedPlayers,
                 discardPile = state.discardPile + swappedOut,
                 drawnCard = null,
+                drawnCardCameFromDiscard = false,
                 revealRequiredBeforeEndTurn = false,
                 stage = TurnStage.TURN_END,
             )
@@ -143,8 +147,23 @@ object SkyoGame {
         return state.copy(
             discardPile = state.discardPile + drawn.copy(isRevealed = true, isCleared = false),
             drawnCard = null,
+            drawnCardCameFromDiscard = false,
             revealRequiredBeforeEndTurn = hasHiddenGridCard,
             stage = TurnStage.TURN_END,
+        )
+    }
+
+    private fun returnDrawnDiscardCard(state: GameState): GameState {
+        require(state.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD) { "Must choose swap or discard after drawing" }
+        require(state.drawnCardCameFromDiscard) { "Only a card taken from discard can be returned" }
+        val drawn = requireNotNull(state.drawnCard) { "No drawn card available" }
+
+        return state.copy(
+            discardPile = state.discardPile + drawn.copy(isRevealed = true, isCleared = false),
+            drawnCard = null,
+            drawnCardCameFromDiscard = false,
+            revealRequiredBeforeEndTurn = false,
+            stage = TurnStage.DRAW_OR_TAKE,
         )
     }
 
@@ -326,6 +345,7 @@ object SkyoGame {
         return state.copy(
             players = scoredPlayers.map { it.copy(hasLost = gameEnded && it.score >= MAX_SCORE) },
             drawnCard = null,
+            drawnCardCameFromDiscard = false,
             revealRequiredBeforeEndTurn = false,
             currentPlayerIndex = finishingPlayerIndex,
             stage = TurnStage.TURN_END,
