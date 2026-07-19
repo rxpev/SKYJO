@@ -159,6 +159,41 @@ class SkyoGameTest {
     }
 
     @Test
+    fun `matching revealed row is cleared and removed from score`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        1, 2, 3, 4,
+                        5, 5, 5, 5,
+                        6, 7, 8, 9,
+                    ).mapIndexed { index, card ->
+                        if (index == 4 || index == 5 || index == 6) card.copy(isRevealed = true) else card
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(7))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertTrue(playerGrid[4].isCleared)
+        assertTrue(playerGrid[5].isCleared)
+        assertTrue(playerGrid[6].isCleared)
+        assertTrue(playerGrid[7].isCleared)
+        assertEquals(4, afterReveal.discardPile.takeLast(4).count { it.value == 5 && !it.isCleared })
+        assertEquals(40, SkyoGame.scoreGrid(playerGrid))
+    }
+
+    @Test
     fun `cleared column cards drawn from discard do not clear the new grid slot`() {
         val state = GameState(
             players = listOf(

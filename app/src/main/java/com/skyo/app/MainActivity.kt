@@ -1255,6 +1255,7 @@ private fun BoardGrid(
 ) {
     val cardWidth = if (compact) 46.dp else 72.dp
     val cardHeight = if (compact) 68.dp else 106.dp
+    val gridHeight = cardHeight * BOARD_GRID_ROWS + spacing * (BOARD_GRID_ROWS - 1)
     val visibleRows = (0 until BOARD_GRID_ROWS).filter { row ->
         (0 until BOARD_GRID_COLUMNS).any { column ->
             !cards[row * BOARD_GRID_COLUMNS + column].isCleared
@@ -1267,9 +1268,11 @@ private fun BoardGrid(
     }
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(gridHeight),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(spacing),
+        verticalArrangement = Arrangement.spacedBy(spacing, Alignment.CenterVertically),
     ) {
         visibleRows.forEach { row ->
             Row(

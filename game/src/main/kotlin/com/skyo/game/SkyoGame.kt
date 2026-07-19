@@ -140,7 +140,7 @@ object SkyoGame {
             it[state.currentPlayerIndex] = current.copy(grid = newGrid)
         }
 
-        return clearCompletedColumns(
+        return clearCompletedLines(
             state.copy(
                 players = updatedPlayers,
                 discardPile = state.discardPile + swappedOut,
@@ -199,7 +199,7 @@ object SkyoGame {
             it[state.currentPlayerIndex] = current.copy(grid = updatedGrid)
         }
 
-        return clearCompletedColumns(
+        return clearCompletedLines(
             state.copy(
                 players = updatedPlayers,
                 revealRequiredBeforeEndTurn = false,
@@ -297,27 +297,21 @@ object SkyoGame {
         )
     }
 
-    private fun clearCompletedColumns(state: GameState): GameState {
+    private fun clearCompletedLines(state: GameState): GameState {
         val current = state.players[state.currentPlayerIndex]
         val grid = current.grid.toMutableList()
-        val clearedCards = mutableListOf<Card>()
+        val completedLineIndices = completedLineIndices(grid)
 
-        for (column in 0 until GRID_COLUMNS) {
-            val indices = (0 until GRID_ROWS).map { row -> row * GRID_COLUMNS + column }
-            val columnCards = indices.map { grid[it] }
-            val shouldClear = columnCards.all { it.isRevealed && !it.isCleared } &&
-                columnCards.map { it.value }.distinct().size == 1
-
-            if (shouldClear) {
-                indices.forEach { index ->
-                    clearedCards += grid[index].copy(isRevealed = true, isCleared = false)
-                    grid[index] = grid[index].copy(isRevealed = true, isCleared = true)
-                }
-            }
+        if (completedLineIndices.isEmpty()) {
+            return state
         }
 
-        if (clearedCards.isEmpty()) {
-            return state
+        val clearedCards = completedLineIndices.map { index ->
+            grid[index].copy(isRevealed = true, isCleared = false)
+        }
+
+        completedLineIndices.forEach { index ->
+            grid[index] = grid[index].copy(isRevealed = true, isCleared = true)
         }
 
         val updatedPlayers = state.players.toMutableList().also {
@@ -328,6 +322,24 @@ object SkyoGame {
             players = updatedPlayers,
             discardPile = state.discardPile + clearedCards,
         )
+    }
+
+    private fun completedLineIndices(grid: List<Card>): Set<Int> {
+        val rowLines = (0 until GRID_ROWS).map { row ->
+            (0 until GRID_COLUMNS).map { column -> row * GRID_COLUMNS + column }
+        }
+        val columnLines = (0 until GRID_COLUMNS).map { column ->
+            (0 until GRID_ROWS).map { row -> row * GRID_COLUMNS + column }
+        }
+
+        return (rowLines + columnLines)
+            .filter { indices ->
+                val cards = indices.map { grid[it] }
+                cards.all { it.isRevealed && !it.isCleared } &&
+                    cards.map { it.value }.distinct().size == 1
+            }
+            .flatten()
+            .toSet()
     }
 
     private fun scoreRound(state: GameState, finishingPlayerIndex: Int): GameState {
