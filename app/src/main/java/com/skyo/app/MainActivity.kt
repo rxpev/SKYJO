@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -86,6 +87,15 @@ private data class ActivePileDrag(
     val card: Card,
     val sourceBounds: Rect,
     val dragOffset: Offset,
+)
+
+private data class RoundScoreLine(
+    val playerName: String,
+    val previousTotal: Int,
+    val baseRoundScore: Int,
+    val finalRoundScore: Int,
+    val totalScore: Int,
+    val doubled: Boolean,
 )
 
 class MainActivity : ComponentActivity() {
@@ -414,6 +424,21 @@ private fun SkyjoGameScreen(
             }
             .onFailure { error ->
                 message = error.message ?: "That move is not allowed."
+            }
+    }
+
+    fun startNextRound() {
+        runCatching { SkyoGame.startNextRound(gameState) }
+            .onSuccess { nextState ->
+                activePileDrag = null
+                humanHeldCardCameFromDeck = false
+                botDropTarget = null
+                gridBounds.clear()
+                setGameState(nextState)
+                message = messageFor(nextState)
+            }
+            .onFailure { error ->
+                message = error.message ?: "Could not start the next round."
             }
     }
 
@@ -761,6 +786,144 @@ private fun SkyjoGameScreen(
         activePileDrag?.let { drag ->
             FloatingDraggedCard(drag)
         }
+    }
+
+    if (gameState.roundEnded) {
+        RoundEndDialog(
+            state = gameState,
+            onStartNextRound = ::startNextRound,
+            onReturnToMenu = onReturnToMenu,
+        )
+    }
+}
+
+@Composable
+private fun RoundEndDialog(
+    state: GameState,
+    onStartNextRound: () -> Unit,
+    onReturnToMenu: () -> Unit,
+) {
+    val dialogFocusRequester = remember { FocusRequester() }
+    val scoreLines = remember(state) { state.roundScoreLines() }
+
+    LaunchedEffect(Unit) {
+        dialogFocusRequester.requestFocus()
+    }
+
+    AlertDialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+        ),
+        containerColor = Color(0xFFFFC1D6),
+        title = {
+            Text(
+                text = if (state.gameEnded) "Game over" else "Round ${state.round} scores",
+                color = Color(0xFF143D35),
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                scoreLines.forEach { score ->
+                    RoundScoreRow(score)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = if (state.gameEnded) onReturnToMenu else onStartNextRound,
+                modifier = Modifier
+                    .focusRequester(dialogFocusRequester)
+                    .focusable(),
+            ) {
+                Text(if (state.gameEnded) "Back to Menu" else "Start Next Round")
+            }
+        },
+    )
+}
+
+@Composable
+private fun RoundScoreRow(score: RoundScoreLine) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFFA3B7), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = score.playerName,
+                color = Color(0xFF143D35),
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+            )
+            Text(
+                text = "${score.previousTotal} + ${score.finalRoundScore} = ${score.totalScore}",
+                color = Color(0xFF36524A),
+                fontSize = 13.sp,
+            )
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (score.doubled) {
+                DoublePointsBadge()
+            }
+            Text(
+                text = if (score.doubled) "${score.baseRoundScore} -> ${score.finalRoundScore}" else "${score.finalRoundScore}",
+                color = Color(0xFF143D35),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DoublePointsBadge() {
+    val badgeScale = remember { Animatable(0.75f) }
+
+    LaunchedEffect(Unit) {
+        badgeScale.animateTo(
+            targetValue = 1.25f,
+            animationSpec = tween(
+                durationMillis = DOUBLE_POINTS_BADGE_ANIMATION_MS.toInt(),
+                easing = FastOutSlowInEasing,
+            ),
+        )
+        badgeScale.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(
+                durationMillis = DOUBLE_POINTS_BADGE_SETTLE_MS.toInt(),
+                easing = FastOutSlowInEasing,
+            ),
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .scale(badgeScale.value)
+            .background(Color(0xFFFFE45C), CircleShape)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "2x",
+            color = Color(0xFF6147A8),
+            fontWeight = FontWeight.Black,
+            fontSize = 16.sp,
+        )
     }
 }
 
@@ -1126,6 +1289,8 @@ private const val HUMAN_AUTO_END_TURN_DELAY_MS = 650L
 private const val OPENING_BOT_REVEAL_DELAY_MIN_MS = 450L
 private const val OPENING_BOT_REVEAL_DELAY_MAX_MS = 1200L
 private const val SPLASH_DURATION_MS = 1200L
+private const val DOUBLE_POINTS_BADGE_ANIMATION_MS = 420L
+private const val DOUBLE_POINTS_BADGE_SETTLE_MS = 220L
 
 private fun chooseBotDrawAction(state: GameState): Action {
     val bot = state.players[state.currentPlayerIndex]
@@ -1164,6 +1329,30 @@ private fun chooseBotRevealIndex(state: GameState): Int? {
         ?.index
 }
 
+private fun GameState.roundScoreLines(): List<RoundScoreLine> {
+    val baseScores = players.map { player -> SkyoGame.scoreGrid(player.grid) }
+    val finishingIndex = roundFinisherIndex
+    val finishingPlayerHasLowestScore = finishingIndex == null ||
+        baseScores.withIndex().all { (index, score) ->
+            index == finishingIndex || baseScores[finishingIndex] <= score
+        }
+
+    return players.mapIndexed { index, player ->
+        val doubled = index == finishingIndex && !finishingPlayerHasLowestScore
+        val baseRoundScore = baseScores[index]
+        val finalRoundScore = if (doubled) baseRoundScore * 2 else baseRoundScore
+
+        RoundScoreLine(
+            playerName = player.name,
+            previousTotal = player.score - finalRoundScore,
+            baseRoundScore = baseRoundScore,
+            finalRoundScore = finalRoundScore,
+            totalScore = player.score,
+            doubled = doubled,
+        )
+    }
+}
+
 private fun messageFor(state: GameState): String {
     if (state.gameEnded) {
         val losers = state.players.filter { it.hasLost }.joinToString { it.name }
@@ -1171,7 +1360,7 @@ private fun messageFor(state: GameState): String {
     }
 
     if (state.roundEnded) {
-        return "Round over. Start a new game for now."
+        return "Round over."
     }
 
     if (state.roundFinisherIndex != null) {

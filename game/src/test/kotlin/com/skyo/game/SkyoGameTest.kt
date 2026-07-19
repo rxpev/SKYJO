@@ -255,6 +255,49 @@ class SkyoGameTest {
     }
 
     @Test
+    fun `next round preserves totals and redeals hidden cards`() {
+        val roundOver = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, revealed = true),
+                    score = 60,
+                ),
+                PlayerState(
+                    id = 1,
+                    name = "Bot 1",
+                    isBot = true,
+                    grid = gridOf(2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, revealed = true),
+                    score = 24,
+                ),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+            round = 2,
+            roundFinisherIndex = 0,
+            roundEnded = true,
+        )
+
+        val nextRound = SkyoGame.startNextRound(roundOver, random = Random(14))
+
+        assertEquals(3, nextRound.round)
+        assertEquals(TurnStage.OPENING_REVEAL, nextRound.stage)
+        assertFalse(nextRound.roundEnded)
+        assertEquals(60, nextRound.players[0].score)
+        assertEquals(24, nextRound.players[1].score)
+        nextRound.players.forEach { player ->
+            assertEquals(12, player.grid.size)
+            assertEquals(0, player.grid.count { it.isRevealed })
+        }
+        assertTrue(nextRound.discardPile.single().isRevealed)
+        assertEquals(null, nextRound.roundFinisherIndex)
+    }
+
+    @Test
     fun `players with at least 100 total points lose after round scoring`() {
         val state = GameState(
             players = listOf(

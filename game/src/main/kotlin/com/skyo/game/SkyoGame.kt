@@ -21,25 +21,38 @@ object SkyoGame {
             }
         }
 
-        val shuffledDeck = defaultDeck().shuffled(random)
-        var pointer = 0
-
-        val initializedPlayers = players.map { player ->
-            val dealt = shuffledDeck.subList(pointer, pointer + GRID_SIZE).map { it.copy(isRevealed = false) }
-            pointer += GRID_SIZE
-
-            player.copy(grid = dealt)
-        }
-
-        val discardStart = shuffledDeck[pointer].copy(isRevealed = true)
-        pointer += 1
+        val deal = dealRound(players, random)
 
         return GameState(
-            players = initializedPlayers,
-            deck = shuffledDeck.drop(pointer),
-            discardPile = listOf(discardStart),
+            players = deal.players,
+            deck = deal.deck,
+            discardPile = deal.discardPile,
             currentPlayerIndex = 0,
             stage = TurnStage.OPENING_REVEAL,
+        )
+    }
+
+    fun startNextRound(
+        state: GameState,
+        random: Random = Random.Default,
+    ): GameState {
+        require(state.roundEnded) { "Round must be over before starting the next round" }
+        require(!state.gameEnded) { "Game is already over" }
+
+        val deal = dealRound(
+            players = state.players.map { player ->
+                player.copy(grid = emptyList(), hasLost = false)
+            },
+            random = random,
+        )
+
+        return GameState(
+            players = deal.players,
+            deck = deal.deck,
+            discardPile = deal.discardPile,
+            currentPlayerIndex = 0,
+            stage = TurnStage.OPENING_REVEAL,
+            round = state.round + 1,
         )
     }
 
@@ -458,6 +471,33 @@ object SkyoGame {
             else -> 1
         }
     }
+
+    private fun dealRound(players: List<PlayerState>, random: Random): RoundDeal {
+        val shuffledDeck = defaultDeck().shuffled(random)
+        var pointer = 0
+
+        val initializedPlayers = players.map { player ->
+            val dealt = shuffledDeck.subList(pointer, pointer + GRID_SIZE).map { it.copy(isRevealed = false) }
+            pointer += GRID_SIZE
+
+            player.copy(grid = dealt)
+        }
+
+        val discardStart = shuffledDeck[pointer].copy(isRevealed = true)
+        pointer += 1
+
+        return RoundDeal(
+            players = initializedPlayers,
+            deck = shuffledDeck.drop(pointer),
+            discardPile = listOf(discardStart),
+        )
+    }
+
+    private data class RoundDeal(
+        val players: List<PlayerState>,
+        val deck: List<Card>,
+        val discardPile: List<Card>,
+    )
 
     private fun defaultDeck(): List<Card> {
         val values = listOf(
