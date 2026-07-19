@@ -1350,7 +1350,7 @@ private fun GameState.roundScoreLines(): List<RoundScoreLine> {
     val finishingIndex = roundFinisherIndex
     val finishingPlayerHasLowestScore = finishingIndex == null ||
         baseScores.withIndex().all { (index, score) ->
-            index == finishingIndex || baseScores[finishingIndex] <= score
+            index == finishingIndex || baseScores[finishingIndex] < score
         }
 
     return players.mapIndexed { index, player ->

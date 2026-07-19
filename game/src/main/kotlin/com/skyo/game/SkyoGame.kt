@@ -342,7 +342,7 @@ object SkyoGame {
         val roundScores = revealedPlayers.map { scoreGrid(it.grid) }
         val finishingPlayerScore = roundScores[finishingPlayerIndex]
         val finishingPlayerHasLowestScore = roundScores.withIndex()
-            .all { (index, score) -> index == finishingPlayerIndex || finishingPlayerScore <= score }
+            .all { (index, score) -> index == finishingPlayerIndex || finishingPlayerScore < score }
 
         val scoredPlayers = revealedPlayers.mapIndexed { index, player ->
             val roundScore = if (index == finishingPlayerIndex && !finishingPlayerHasLowestScore) {

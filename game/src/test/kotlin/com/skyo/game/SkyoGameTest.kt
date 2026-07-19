@@ -255,6 +255,48 @@ class SkyoGameTest {
     }
 
     @Test
+    fun `round finisher score doubles when tied for lowest score`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        0, 0, 0, 9,
+                        revealed = true,
+                    ),
+                ),
+                PlayerState(
+                    id = 1,
+                    name = "Bot 1",
+                    isBot = true,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        0, 0, 0, 9,
+                        revealed = true,
+                    ),
+                ),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+            roundFinisherIndex = 1,
+            finalTurnsRemaining = 1,
+        )
+
+        val roundOver = SkyoGame.reduce(state, Action.EndTurn)
+
+        assertTrue(roundOver.roundEnded)
+        assertEquals(9, roundOver.players[0].score)
+        assertEquals(18, roundOver.players[1].score)
+    }
+
+    @Test
     fun `next round preserves totals and redeals hidden cards`() {
         val roundOver = GameState(
             players = listOf(
