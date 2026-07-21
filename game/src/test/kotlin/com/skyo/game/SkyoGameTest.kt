@@ -194,6 +194,359 @@ class SkyoGameTest {
     }
 
     @Test
+    fun `single revealed card in one by one grid is not cleared`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        0, 0, 0, 4,
+                    ).mapIndexed { index, card ->
+                        if (index == 11) card else card.copy(isRevealed = true, isCleared = true)
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11))
+
+        assertFalse(afterReveal.players[0].grid[11].isCleared)
+        assertEquals(1, afterReveal.discardPile.size)
+    }
+
+    @Test
+    fun `two matching cards can clear in two by one row`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        0, 0, 6, 6,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            10 -> card.copy(isRevealed = true)
+                            11 -> card
+                            else -> card.copy(isRevealed = true, isCleared = true)
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11))
+
+        assertTrue(afterReveal.players[0].grid[10].isCleared)
+        assertTrue(afterReveal.players[0].grid[11].isCleared)
+        assertEquals(2, afterReveal.discardPile.takeLast(2).count { it.value == 6 && !it.isCleared })
+    }
+
+    @Test
+    fun `two matching cards can clear in one by two column`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 0, 6,
+                        0, 0, 0, 6,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            7 -> card.copy(isRevealed = true)
+                            11 -> card
+                            else -> card.copy(isRevealed = true, isCleared = true)
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11))
+
+        assertTrue(afterReveal.players[0].grid[7].isCleared)
+        assertTrue(afterReveal.players[0].grid[11].isCleared)
+        assertEquals(2, afterReveal.discardPile.takeLast(2).count { it.value == 6 && !it.isCleared })
+    }
+
+    @Test
+    fun `four by one row only clears when all four active cards match`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        6, 6, 6, 7,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            8, 9, 10 -> card.copy(isRevealed = true)
+                            11 -> card
+                            else -> card.copy(isRevealed = true, isCleared = true)
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertFalse(playerGrid[8].isCleared)
+        assertFalse(playerGrid[9].isCleared)
+        assertFalse(playerGrid[10].isCleared)
+        assertFalse(playerGrid[11].isCleared)
+        assertEquals(1, afterReveal.discardPile.size)
+    }
+
+    @Test
+    fun `matching revealed diagonal is cleared and compacted only in active three by three grid`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 9, 1, 2,
+                        0, 3, 9, 4,
+                        0, 5, 6, 9,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            0, 4, 8 -> card.copy(isRevealed = true, isCleared = true)
+                            1, 6 -> card.copy(isRevealed = true)
+                            else -> card
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertActiveRectangle(playerGrid, expectedRows = 2, expectedColumns = 3)
+        assertEquals(listOf(1, 2, 3, 4, 5, 6), playerGrid.filterNot { it.isCleared }.map { it.value }.sorted())
+        assertEquals(3, afterReveal.discardPile.takeLast(3).count { it.value == 9 && !it.isCleared })
+    }
+
+    @Test
+    fun `matching revealed opposite diagonal is cleared and compacted only in active three by three grid`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 1, 2, 7,
+                        0, 3, 7, 4,
+                        0, 7, 5, 6,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            0, 4, 8 -> card.copy(isRevealed = true, isCleared = true)
+                            3, 6 -> card.copy(isRevealed = true)
+                            else -> card
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(9))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertActiveRectangle(playerGrid, expectedRows = 2, expectedColumns = 3)
+        assertEquals(listOf(1, 2, 3, 4, 5, 6), playerGrid.filterNot { it.isCleared }.map { it.value }.sorted())
+        assertEquals(3, afterReveal.discardPile.takeLast(3).count { it.value == 7 && !it.isCleared })
+    }
+
+    @Test
+    fun `diagonal compaction runs follow up horizontal removal on compacted three by two grid`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 9, 2, 2,
+                        0, 2, 9, 4,
+                        0, 5, 6, 9,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            0, 4, 8 -> card.copy(isRevealed = true, isCleared = true)
+                            1, 2, 3, 5, 6 -> card.copy(isRevealed = true)
+                            else -> card
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11), random = Random(0))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertActiveRectangle(playerGrid, expectedRows = 1, expectedColumns = 3)
+        assertEquals(3, afterReveal.discardPile.takeLast(6).count { it.value == 9 && !it.isCleared })
+        assertEquals(3, afterReveal.discardPile.takeLast(6).count { it.value == 2 && !it.isCleared })
+    }
+
+    @Test
+    fun `column clear can trigger newly valid diagonal and compacted follow up removal`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        4, 7, 2, 0,
+                        5, 2, -2, 0,
+                        2, 6, -2, 0,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            2, 3, 5, 6, 7, 8, 10 -> card.copy(isRevealed = true)
+                            else -> card
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(3, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11), random = Random(0))
+        val playerGrid = afterReveal.players[0].grid
+        val chainedClears = afterReveal.discardPile.drop(1)
+
+        assertEquals(3, chainedClears.count { it.value == 0 && !it.isCleared })
+        assertEquals(3, chainedClears.count { it.value == 2 && !it.isCleared })
+        assertEquals(2, chainedClears.count { it.value == -2 && !it.isCleared })
+        assertEquals(listOf(4, 5, 6, 7), playerGrid.filterNot { it.isCleared }.map { it.value }.sorted())
+        assertActiveRectangle(playerGrid, expectedRows = 2, expectedColumns = 2)
+    }
+
+    @Test
+    fun `matching revealed diagonal is not cleared in original four by three grid`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        4, 1, 2, 3,
+                        5, 4, 6, 7,
+                        8, 9, 4, 10,
+                    ).mapIndexed { index, card ->
+                        if (index == 0 || index == 5) card.copy(isRevealed = true) else card
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(10))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertFalse(playerGrid[0].isCleared)
+        assertFalse(playerGrid[5].isCleared)
+        assertFalse(playerGrid[10].isCleared)
+        assertEquals(1, afterReveal.discardPile.size)
+    }
+
+    @Test
+    fun `matching revealed diagonal pair is not cleared in active two by two grid`() {
+        val state = GameState(
+            players = listOf(
+                PlayerState(
+                    id = 0,
+                    name = "You",
+                    isBot = false,
+                    grid = gridOf(
+                        0, 0, 0, 0,
+                        0, 0, 8, 1,
+                        0, 0, 2, 8,
+                    ).mapIndexed { index, card ->
+                        when (index) {
+                            0, 1, 2, 3, 4, 5, 8, 9 -> card.copy(isRevealed = true, isCleared = true)
+                            6 -> card.copy(isRevealed = true)
+                            else -> card
+                        }
+                    },
+                ),
+                PlayerState(id = 1, name = "Bot 1", isBot = true, grid = gridOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ),
+            deck = emptyList(),
+            discardPile = listOf(Card(0, isRevealed = true)),
+            currentPlayerIndex = 0,
+            stage = TurnStage.TURN_END,
+        )
+
+        val afterReveal = SkyoGame.reduce(state, Action.RevealGrid(11))
+        val playerGrid = afterReveal.players[0].grid
+
+        assertFalse(playerGrid[6].isCleared)
+        assertFalse(playerGrid[11].isCleared)
+        assertEquals(1, afterReveal.discardPile.size)
+    }
+
+    @Test
     fun `cleared column cards drawn from discard do not clear the new grid slot`() {
         val state = GameState(
             players = listOf(
@@ -543,6 +896,24 @@ class SkyoGameTest {
 
     private fun gridOf(vararg values: Int, revealed: Boolean = false): List<Card> {
         return values.map { Card(value = it, isRevealed = revealed) }
+    }
+
+    private fun assertActiveRectangle(grid: List<Card>, expectedRows: Int, expectedColumns: Int) {
+        val activeRows = (0 until 3).filter { row ->
+            (0 until 4).any { column -> !grid[row * 4 + column].isCleared }
+        }
+        val activeColumns = (0 until 4).filter { column ->
+            (0 until 3).any { row -> !grid[row * 4 + column].isCleared }
+        }
+
+        assertEquals(expectedRows, activeRows.size)
+        assertEquals(expectedColumns, activeColumns.size)
+        activeRows.forEach { row ->
+            activeColumns.forEach { column ->
+                assertFalse(grid[row * 4 + column].isCleared)
+            }
+        }
+        assertEquals(expectedRows * expectedColumns, grid.count { !it.isCleared })
     }
 
     private fun playableNewGame(random: Random): GameState {

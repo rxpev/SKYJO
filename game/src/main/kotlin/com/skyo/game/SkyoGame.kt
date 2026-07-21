@@ -6,6 +6,7 @@ object SkyoGame {
     private const val GRID_SIZE = 12
     private const val GRID_COLUMNS = 4
     private const val GRID_ROWS = 3
+    private const val MIN_CLEAR_LINE_LENGTH = 2
 
     fun newGame(
         humanPlayerName: String,
@@ -56,13 +57,13 @@ object SkyoGame {
         )
     }
 
-    fun reduce(state: GameState, action: Action): GameState = when (action) {
+    fun reduce(state: GameState, action: Action, random: Random = Random.Default): GameState = when (action) {
         Action.DrawFromDeck -> drawFromDeck(requireRoundInProgress(state))
         Action.DrawFromDiscard -> drawFromDiscard(requireRoundInProgress(state))
-        is Action.SwapWithGrid -> swapWithGrid(requireRoundInProgress(state), action.index)
+        is Action.SwapWithGrid -> swapWithGrid(requireRoundInProgress(state), action.index, random)
         Action.DiscardDrawnCard -> discardDrawnCard(requireRoundInProgress(state))
         Action.ReturnDrawnDiscardCard -> returnDrawnDiscardCard(requireRoundInProgress(state))
-        is Action.RevealGrid -> revealGrid(requireRoundInProgress(state), action.index)
+        is Action.RevealGrid -> revealGrid(requireRoundInProgress(state), action.index, random)
         is Action.RevealOpeningBotGrid -> revealOpeningBotGrid(requireRoundInProgress(state), action.playerId, action.index)
         Action.EndTurn -> endTurn(requireRoundInProgress(state))
     }
@@ -127,7 +128,7 @@ object SkyoGame {
         )
     }
 
-    private fun swapWithGrid(state: GameState, index: Int): GameState {
+    private fun swapWithGrid(state: GameState, index: Int, random: Random): GameState {
         require(state.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD) { "Must choose swap or discard after drawing" }
         require(index in 0 until GRID_SIZE) { "Grid index out of bounds" }
         val drawn = requireNotNull(state.drawnCard) { "No drawn card available" }
@@ -148,7 +149,8 @@ object SkyoGame {
                 drawnCardCameFromDiscard = false,
                 revealRequiredBeforeEndTurn = false,
                 stage = TurnStage.TURN_END,
-            )
+            ),
+            random,
         )
     }
 
@@ -180,7 +182,7 @@ object SkyoGame {
         )
     }
 
-    private fun revealGrid(state: GameState, index: Int): GameState {
+    private fun revealGrid(state: GameState, index: Int, random: Random): GameState {
         if (state.stage == TurnStage.OPENING_REVEAL) {
             return revealHumanOpeningGrid(state, index)
         }
@@ -203,7 +205,8 @@ object SkyoGame {
             state.copy(
                 players = updatedPlayers,
                 revealRequiredBeforeEndTurn = false,
-            )
+            ),
+            random,
         )
     }
 
@@ -297,10 +300,16 @@ object SkyoGame {
         )
     }
 
-    private fun clearCompletedLines(state: GameState): GameState {
+    private fun clearCompletedLines(state: GameState, random: Random): GameState {
         val current = state.players[state.currentPlayerIndex]
         val grid = current.grid.toMutableList()
-        val completedLineIndices = completedLineIndices(grid)
+        val completedLines = completedLines(grid)
+        val diagonalLines = completedLines.filter { it.kind == LineKind.DIAGONAL }
+        if (diagonalLines.isNotEmpty()) {
+            return clearDiagonalLine(state, diagonalLines, random)
+        }
+
+        val completedLineIndices = completedLines.flatMap { it.indices }.toSet()
 
         if (completedLineIndices.isEmpty()) {
             return state
@@ -318,28 +327,228 @@ object SkyoGame {
             it[state.currentPlayerIndex] = current.copy(grid = grid)
         }
 
-        return state.copy(
-            players = updatedPlayers,
-            discardPile = state.discardPile + clearedCards,
+        return clearCompletedLines(
+            state.copy(
+                players = updatedPlayers,
+                discardPile = state.discardPile + clearedCards,
+            ),
+            random,
         )
     }
 
-    private fun completedLineIndices(grid: List<Card>): Set<Int> {
-        val rowLines = (0 until GRID_ROWS).map { row ->
-            (0 until GRID_COLUMNS).map { column -> row * GRID_COLUMNS + column }
+    private fun clearDiagonalLine(state: GameState, diagonalLines: List<CompletedLine>, random: Random): GameState {
+        val current = state.players[state.currentPlayerIndex]
+        val candidateLayouts = diagonalLines.flatMap { diagonalLine ->
+            listOf(CompactionDirection.UP, CompactionDirection.DOWN).map { direction ->
+                val compactedGrid = compactAfterDiagonalClear(current.grid, diagonalLine.indices, direction)
+                CompactionCandidate(
+                    grid = compactedGrid,
+                    clearedDiagonalCards = diagonalLine.indices.map {
+                        current.grid[it].copy(isRevealed = true, isCleared = false)
+                    },
+                    evaluation = evaluateFollowUpRemovals(compactedGrid),
+                )
+            }
         }
-        val columnLines = (0 until GRID_COLUMNS).map { column ->
-            (0 until GRID_ROWS).map { row -> row * GRID_COLUMNS + column }
+        val chosen = chooseCompactionCandidate(candidateLayouts, random)
+        val updatedPlayers = state.players.toMutableList().also {
+            it[state.currentPlayerIndex] = current.copy(grid = chosen.grid)
         }
 
-        return (rowLines + columnLines)
-            .filter { indices ->
-                val cards = indices.map { grid[it] }
-                cards.all { it.isRevealed && !it.isCleared } &&
-                    cards.map { it.value }.distinct().size == 1
+        return clearCompletedLines(
+            state.copy(
+                players = updatedPlayers,
+                discardPile = state.discardPile + chosen.clearedDiagonalCards,
+            ),
+            random,
+        )
+    }
+
+    private fun completedLines(grid: List<Card>, includeDiagonals: Boolean = true): List<CompletedLine> {
+        return candidateLines(grid, includeDiagonals)
+            .filter { line ->
+                val cards = line.indices.map { grid[it] }
+                cards.all { it.isRevealed && !it.isCleared } && cards.map { it.value }.distinct().size == 1
             }
-            .flatten()
+    }
+
+    private fun candidateLines(grid: List<Card>, includeDiagonals: Boolean): List<CompletedLine> {
+        val activeRows = activeRows(grid)
+        val activeColumns = activeColumns(grid)
+        val rowLines = activeRows.map { row ->
+            CompletedLine(
+                kind = LineKind.ROW,
+                indices = activeColumns.map { column -> row * GRID_COLUMNS + column },
+            )
+        }
+        val columnLines = activeColumns.map { column ->
+            CompletedLine(
+                kind = LineKind.COLUMN,
+                indices = activeRows.map { row -> row * GRID_COLUMNS + column },
+            )
+        }
+        val diagonalLines = if (includeDiagonals) activeThreeByThreeDiagonalLines(grid, activeRows, activeColumns) else emptyList()
+
+        return (rowLines + columnLines + diagonalLines)
+            .filter { it.indices.size >= MIN_CLEAR_LINE_LENGTH }
+    }
+
+    private fun activeRows(grid: List<Card>): List<Int> {
+        return (0 until GRID_ROWS).filter { row ->
+            (0 until GRID_COLUMNS).any { column -> !grid[row * GRID_COLUMNS + column].isCleared }
+        }
+    }
+
+    private fun activeColumns(grid: List<Card>): List<Int> {
+        return (0 until GRID_COLUMNS).filter { column ->
+            (0 until GRID_ROWS).any { row -> !grid[row * GRID_COLUMNS + column].isCleared }
+        }
+    }
+
+    private fun activeThreeByThreeDiagonalLines(
+        grid: List<Card>,
+        activeRows: List<Int> = activeRows(grid),
+        activeColumns: List<Int> = activeColumns(grid),
+    ): List<CompletedLine> {
+        if (activeRows.size != 3 || activeColumns.size != 3) {
+            return emptyList()
+        }
+
+        val isFullActiveGrid = activeRows.all { row ->
+            activeColumns.all { column -> !grid[row * GRID_COLUMNS + column].isCleared }
+        }
+        if (!isFullActiveGrid) {
+            return emptyList()
+        }
+
+        return listOf(
+            CompletedLine(
+                kind = LineKind.DIAGONAL,
+                indices = listOf(
+                    activeRows[0] * GRID_COLUMNS + activeColumns[0],
+                    activeRows[1] * GRID_COLUMNS + activeColumns[1],
+                    activeRows[2] * GRID_COLUMNS + activeColumns[2],
+                ),
+            ),
+            CompletedLine(
+                kind = LineKind.DIAGONAL,
+                indices = listOf(
+                    activeRows[0] * GRID_COLUMNS + activeColumns[2],
+                    activeRows[1] * GRID_COLUMNS + activeColumns[1],
+                    activeRows[2] * GRID_COLUMNS + activeColumns[0],
+                ),
+            ),
+        )
+    }
+
+    private fun compactAfterDiagonalClear(
+        grid: List<Card>,
+        diagonalIndices: List<Int>,
+        direction: CompactionDirection,
+    ): List<Card> {
+        val activeRows = activeRows(grid)
+        val activeColumns = activeColumns(grid)
+        val clearedDiagonal = diagonalIndices.toSet()
+        val compacted = grid.toMutableList()
+
+        diagonalIndices.forEach { index ->
+            compacted[index] = compacted[index].copy(isRevealed = true, isCleared = true)
+        }
+
+        activeColumns.forEach { column ->
+            val remainingCards = activeRows
+                .map { row -> row * GRID_COLUMNS + column }
+                .filterNot { it in clearedDiagonal }
+                .map { grid[it] }
+            val targetRows = when (direction) {
+                CompactionDirection.UP -> activeRows.take(2)
+                CompactionDirection.DOWN -> activeRows.takeLast(2)
+            }
+            activeRows.forEach { row ->
+                compacted[row * GRID_COLUMNS + column] = compacted[row * GRID_COLUMNS + column].copy(
+                    isRevealed = true,
+                    isCleared = true,
+                )
+            }
+            targetRows.zip(remainingCards).forEach { (row, card) ->
+                compacted[row * GRID_COLUMNS + column] = card
+            }
+        }
+
+        return compacted
+    }
+
+    private fun evaluateFollowUpRemovals(grid: List<Card>): CompactionEvaluation {
+        val removableLines = completedLines(grid, includeDiagonals = false)
+        val harmfulIndices = removableLines
+            .filter { line -> grid[line.indices.first()].value < 0 }
+            .flatMap { it.indices }
             .toSet()
+        val beneficialIndices = removableLines
+            .filter { line -> grid[line.indices.first()].value >= 0 }
+            .flatMap { it.indices }
+            .toSet()
+
+        return CompactionEvaluation(
+            harmfulCardCount = harmfulIndices.size,
+            harmfulValueSum = harmfulIndices.sumOf { grid[it].value },
+            beneficialPositiveValue = beneficialIndices.sumOf { grid[it].value.coerceAtLeast(0) },
+            beneficialCardCount = beneficialIndices.size,
+        )
+    }
+
+    private fun chooseCompactionCandidate(
+        candidates: List<CompactionCandidate>,
+        random: Random,
+    ): CompactionCandidate {
+        val bestCandidates = candidates.filter { candidate ->
+            candidates.all { other -> candidate.evaluation.isAtLeastAsGoodAs(other.evaluation) }
+        }
+
+        return bestCandidates.random(random)
+    }
+
+    private enum class LineKind {
+        ROW,
+        COLUMN,
+        DIAGONAL,
+    }
+
+    private enum class CompactionDirection {
+        UP,
+        DOWN,
+    }
+
+    private data class CompletedLine(
+        val kind: LineKind,
+        val indices: List<Int>,
+    )
+
+    private data class CompactionCandidate(
+        val grid: List<Card>,
+        val clearedDiagonalCards: List<Card>,
+        val evaluation: CompactionEvaluation,
+    )
+
+    private data class CompactionEvaluation(
+        val harmfulCardCount: Int,
+        val harmfulValueSum: Int,
+        val beneficialPositiveValue: Int,
+        val beneficialCardCount: Int,
+    ) {
+        fun isAtLeastAsGoodAs(other: CompactionEvaluation): Boolean {
+            if (harmfulCardCount == 0 && other.harmfulCardCount > 0) return true
+            if (harmfulCardCount > 0 && other.harmfulCardCount == 0) return false
+            if (harmfulCardCount > 0 && other.harmfulCardCount > 0) {
+                harmfulCardCount.compareTo(other.harmfulCardCount).takeIf { it != 0 }?.let { return it < 0 }
+                harmfulValueSum.compareTo(other.harmfulValueSum).takeIf { it != 0 }?.let { return it > 0 }
+                return true
+            }
+
+            beneficialPositiveValue.compareTo(other.beneficialPositiveValue).takeIf { it != 0 }?.let { return it > 0 }
+            beneficialCardCount.compareTo(other.beneficialCardCount).takeIf { it != 0 }?.let { return it > 0 }
+            return true
+        }
     }
 
     private fun scoreRound(state: GameState, finishingPlayerIndex: Int): GameState {
