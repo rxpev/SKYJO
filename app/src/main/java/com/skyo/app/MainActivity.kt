@@ -368,6 +368,7 @@ private fun SkyjoGameScreen(
     var activePileDrag by remember { mutableStateOf<ActivePileDrag?>(null) }
     var humanHeldCardCameFromDeck by remember { mutableStateOf(false) }
     var botDropTarget by remember { mutableStateOf<Rect?>(null) }
+    var showRoundEndDialog by remember(initialGameState) { mutableStateOf(false) }
     val gridBounds = remember { mutableStateMapOf<Int, Rect>() }
 
     fun setGameState(nextState: GameState) {
@@ -581,6 +582,14 @@ private fun SkyjoGameScreen(
         }
     }
 
+    LaunchedEffect(gameState.round, gameState.roundEnded, gameState.gameEnded) {
+        showRoundEndDialog = false
+        if (gameState.roundEnded) {
+            delay(ROUND_END_REVEAL_REVIEW_DELAY_MS)
+            showRoundEndDialog = true
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -704,8 +713,12 @@ private fun SkyjoGameScreen(
                         label = "Deck",
                         value = gameState.deck.size.toString(),
                         compact = true,
-                        enabled = !isBotTurn && !isOpeningReveal,
-                        draggable = !isBotTurn && !isOpeningReveal && gameState.stage == TurnStage.DRAW_OR_TAKE,
+                        enabled = !gameState.roundEnded && !gameState.gameEnded && !isBotTurn && !isOpeningReveal,
+                        draggable = !gameState.roundEnded &&
+                            !gameState.gameEnded &&
+                            !isBotTurn &&
+                            !isOpeningReveal &&
+                            gameState.stage == TurnStage.DRAW_OR_TAKE,
                         onPositioned = { deckBounds = it },
                         onDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
                         onDrag = { dragAmount ->
@@ -738,8 +751,12 @@ private fun SkyjoGameScreen(
                         value = discard?.value?.toString() ?: "-",
                         imageRes = discard?.let { cardImageRes(it.value) },
                         compact = true,
-                        enabled = !isBotTurn && !isOpeningReveal,
-                        draggable = !isBotTurn && !isOpeningReveal && gameState.stage == TurnStage.DRAW_OR_TAKE,
+                        enabled = !gameState.roundEnded && !gameState.gameEnded && !isBotTurn && !isOpeningReveal,
+                        draggable = !gameState.roundEnded &&
+                            !gameState.gameEnded &&
+                            !isBotTurn &&
+                            !isOpeningReveal &&
+                            gameState.stage == TurnStage.DRAW_OR_TAKE,
                         onPositioned = { discardBounds = it },
                         onDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
                         onDrag = { dragAmount ->
@@ -764,7 +781,7 @@ private fun SkyjoGameScreen(
             PlayerBoard(
                 player = humanPlayer,
                 title = "${humanPlayer.name} | Score ${humanPlayer.score}",
-                enabled = !isBotTurn || isOpeningReveal,
+                enabled = !gameState.roundEnded && !gameState.gameEnded && (!isBotTurn || isOpeningReveal),
                 compact = false,
                 modifier = Modifier.weight(1f, fill = false),
                 onCardPositioned = { index, bounds ->
@@ -789,7 +806,7 @@ private fun SkyjoGameScreen(
         }
     }
 
-    if (gameState.roundEnded) {
+    if (showRoundEndDialog) {
         RoundEndDialog(
             state = gameState,
             onStartNextRound = ::startNextRound,
@@ -1306,6 +1323,7 @@ private const val HUMAN_AUTO_END_TURN_DELAY_MS = 650L
 private const val OPENING_BOT_REVEAL_DELAY_MIN_MS = 450L
 private const val OPENING_BOT_REVEAL_DELAY_MAX_MS = 1200L
 private const val SPLASH_DURATION_MS = 1200L
+private const val ROUND_END_REVEAL_REVIEW_DELAY_MS = 3000L
 private const val DOUBLE_POINTS_BADGE_ANIMATION_MS = 420L
 private const val DOUBLE_POINTS_BADGE_SETTLE_MS = 220L
 private const val BOARD_GRID_COLUMNS = 4
