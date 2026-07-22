@@ -1426,18 +1426,18 @@ private fun messageFor(state: GameState): String {
 }
 
 private fun cardImageRes(value: Int): Int = when (value) {
-    -2 -> R.drawable.card_neg_2
-    -1 -> R.drawable.card_neg_1
-    0 -> R.drawable.card_0
-    1 -> R.drawable.card_1
-    2 -> R.drawable.card_2
-    3 -> R.drawable.card_3
-    4 -> R.drawable.card_4
-    5 -> R.drawable.card_5
-    6 -> R.drawable.card_6
-    7 -> R.drawable.card_7
-    8 -> R.drawable.card_8
-    9 -> R.drawable.card_9
+    -2 -> R.drawable.card_neg2
+    -1 -> R.drawable.card_neg1
+    0 -> R.drawable.card_00
+    1 -> R.drawable.card_01
+    2 -> R.drawable.card_02
+    3 -> R.drawable.card_03
+    4 -> R.drawable.card_04
+    5 -> R.drawable.card_05
+    6 -> R.drawable.card_06
+    7 -> R.drawable.card_07
+    8 -> R.drawable.card_08
+    9 -> R.drawable.card_09
     10 -> R.drawable.card_10
     11 -> R.drawable.card_11
     12 -> R.drawable.card_12
