@@ -86,11 +86,17 @@ import org.json.JSONObject
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
-private data class ActivePileDrag(
+private class ActivePileDrag(
     val card: Card,
     val sourceBounds: Rect,
-    val dragOffset: Offset,
-)
+) {
+    var dragOffset by mutableStateOf(Offset.Zero)
+        private set
+
+    fun moveBy(delta: Offset) {
+        dragOffset += delta
+    }
+}
 
 private data class RoundScoreLine(
     val playerName: String,
@@ -422,7 +428,6 @@ private fun SkyjoGameScreen(
                 activePileDrag = ActivePileDrag(
                     card = drawn,
                     sourceBounds = sourceBounds,
-                    dragOffset = Offset.Zero,
                 )
                 humanHeldCardCameFromDeck = action == Action.DrawFromDeck
                 message = "${gameState.players[gameState.currentPlayerIndex].name} picked up ${drawn.value}."
@@ -707,14 +712,11 @@ private fun SkyjoGameScreen(
                                 activePileDrag = ActivePileDrag(
                                     card = drawn,
                                     sourceBounds = drawnCardBounds,
-                                    dragOffset = Offset.Zero,
                                 )
                             }
                         },
                         onDrag = { dragAmount ->
-                            activePileDrag = activePileDrag?.let {
-                                it.copy(dragOffset = it.dragOffset + dragAmount)
-                            }
+                            activePileDrag?.moveBy(dragAmount)
                         },
                         onDragEnd = {
                             activePileDrag?.let { drag ->
@@ -737,9 +739,7 @@ private fun SkyjoGameScreen(
                         onPositioned = { deckBounds = it },
                         onDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
                         onDrag = { dragAmount ->
-                            activePileDrag = activePileDrag?.let {
-                                it.copy(dragOffset = it.dragOffset + dragAmount)
-                            }
+                            activePileDrag?.moveBy(dragAmount)
                         },
                         onDragEnd = {
                             activePileDrag?.let { drag ->
@@ -775,9 +775,7 @@ private fun SkyjoGameScreen(
                         onPositioned = { discardBounds = it },
                         onDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
                         onDrag = { dragAmount ->
-                            activePileDrag = activePileDrag?.let {
-                                it.copy(dragOffset = it.dragOffset + dragAmount)
-                            }
+                            activePileDrag?.moveBy(dragAmount)
                         },
                         onDragEnd = {
                             activePileDrag?.let { drag ->
