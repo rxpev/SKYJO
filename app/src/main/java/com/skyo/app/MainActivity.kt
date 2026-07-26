@@ -621,12 +621,10 @@ private fun SkyjoGameScreen(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val boardLayout = remember(maxWidth, maxHeight, humanPlayer.grid, opponent?.grid) {
+        val boardLayout = remember(maxWidth, maxHeight) {
             GameBoardLayout.calculate(
                 maxWidth = maxWidth,
                 maxHeight = maxHeight,
-                humanGrid = visibleGridSize(humanPlayer.grid),
-                botGrid = visibleGridSize(opponent?.grid.orEmpty()),
             )
         }
         val discard = gameState.discardPile.lastOrNull()
@@ -675,6 +673,7 @@ private fun SkyjoGameScreen(
                         player = player,
                         roundText = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
                         compact = true,
+                        scale = boardLayout.uiScale,
                         onReturnToMenu = onReturnToMenu,
                     )
 
@@ -710,7 +709,7 @@ private fun SkyjoGameScreen(
                                 text = message,
                                 modifier = Modifier.fillMaxWidth(),
                                 color = Color(0xFF41534F),
-                                fontSize = 12.sp,
+                                fontSize = (12f * boardLayout.uiScale).sp,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -776,6 +775,7 @@ private fun SkyjoGameScreen(
                         player = player,
                         roundText = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
                         compact = false,
+                        scale = boardLayout.uiScale,
                         onReturnToMenu = onReturnToMenu,
                     )
 
@@ -798,7 +798,7 @@ private fun SkyjoGameScreen(
                         text = message,
                         modifier = Modifier.fillMaxWidth(),
                         color = Color(0xFF41534F),
-                        fontSize = 13.sp,
+                        fontSize = (13f * boardLayout.uiScale).sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1020,7 +1020,7 @@ private fun BoardCard(
                 painter = painterResource(cardImageRes(card.value)),
                 contentDescription = "Card ${card.value}",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
+                contentScale = ContentScale.FillBounds,
             )
             else -> CardBack()
         }
@@ -1029,20 +1029,12 @@ private fun BoardCard(
 
 @Composable
 private fun CardBack() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF173B35))
-            .border(1.dp, Color(0xFF214E46), RoundedCornerShape(6.dp)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            painter = painterResource(R.drawable.card_back),
-            contentDescription = "Hidden card",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Fit,
-        )
-    }
+    Image(
+        painter = painterResource(R.drawable.card_back),
+        contentDescription = "Hidden card",
+        modifier = Modifier.fillMaxSize(),
+        contentScale = ContentScale.FillBounds,
+    )
 }
 
 @Composable
@@ -1060,6 +1052,7 @@ private fun GameHeader(
     player: PlayerState,
     roundText: String,
     compact: Boolean,
+    scale: Float,
     onReturnToMenu: () -> Unit,
 ) {
     Row(
@@ -1072,13 +1065,13 @@ private fun GameHeader(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                GameLogo(compact = true)
-                GameTurnText(player = player, compact = true)
+                GameLogo(compact = true, scale = scale)
+                GameTurnText(player = player, compact = true, scale = scale)
             }
         } else {
             Column {
-                GameLogo(compact = false)
-                GameTurnText(player = player, compact = false)
+                GameLogo(compact = false, scale = scale)
+                GameTurnText(player = player, compact = false, scale = scale)
             }
         }
 
@@ -1090,12 +1083,13 @@ private fun GameHeader(
                 text = roundText,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF143D35),
+                fontSize = (14f * scale).sp,
                 maxLines = 1,
             )
             IconButton(
                 onClick = onReturnToMenu,
                 modifier = Modifier
-                    .size(if (compact) 36.dp else 40.dp)
+                    .size((if (compact) 36f else 40f).dp * scale)
                     .clip(CircleShape)
                     .background(Color(0xFF6147A8)),
             ) {
@@ -1103,7 +1097,7 @@ private fun GameHeader(
                     painter = painterResource(R.drawable.home),
                     contentDescription = "Home",
                     tint = Color.White,
-                    modifier = Modifier.size(if (compact) 20.dp else 22.dp),
+                    modifier = Modifier.size((if (compact) 20f else 22f).dp * scale),
                 )
             }
         }
@@ -1111,13 +1105,16 @@ private fun GameHeader(
 }
 
 @Composable
-private fun GameLogo(compact: Boolean) {
+private fun GameLogo(
+    compact: Boolean,
+    scale: Float,
+) {
     Image(
         painter = painterResource(R.drawable.icon),
         contentDescription = "SKYJO",
         modifier = Modifier.size(
-            width = if (compact) 96.dp else 118.dp,
-            height = if (compact) 36.dp else 45.dp,
+            width = (if (compact) 96f else 118f).dp * scale,
+            height = (if (compact) 36f else 45f).dp * scale,
         ),
         contentScale = ContentScale.Fit,
     )
@@ -1127,10 +1124,11 @@ private fun GameLogo(compact: Boolean) {
 private fun GameTurnText(
     player: PlayerState,
     compact: Boolean,
+    scale: Float,
 ) {
     Text(
         text = "${player.name}'s turn | Score ${player.score}",
-        fontSize = if (compact) 12.sp else 15.sp,
+        fontSize = ((if (compact) 12f else 15f) * scale).sp,
         color = Color(0xFF36524A),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -1186,6 +1184,8 @@ private fun PileRow(
                 value = deckSize.toString(),
                 cardWidth = layout.pileCardWidth,
                 cardHeight = layout.pileCardHeight,
+                labelGap = layout.pileLabelGap,
+                labelFontSize = layout.pileLabelFontSize,
                 enabled = canUsePiles,
                 draggable = canDragPile,
                 onPositioned = onDeckPositioned,
@@ -1200,6 +1200,8 @@ private fun PileRow(
                 imageRes = discard?.let { cardImageRes(it.value) },
                 cardWidth = layout.pileCardWidth,
                 cardHeight = layout.pileCardHeight,
+                labelGap = layout.pileLabelGap,
+                labelFontSize = layout.pileLabelFontSize,
                 enabled = canUsePiles,
                 draggable = canDragPile,
                 onPositioned = onDiscardPositioned,
@@ -1219,6 +1221,8 @@ private fun PileCard(
     imageRes: Int? = null,
     cardWidth: Dp,
     cardHeight: Dp,
+    labelGap: Dp,
+    labelFontSize: androidx.compose.ui.unit.TextUnit,
     enabled: Boolean = true,
     draggable: Boolean = false,
     onPositioned: (Rect) -> Unit = {},
@@ -1281,10 +1285,10 @@ private fun PileCard(
                 )
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(labelGap))
         Text(
             text = if (label == "Deck") "$label ($value)" else label,
-            fontSize = 12.sp,
+            fontSize = labelFontSize,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFF143D35),
             maxLines = 1,
@@ -1435,11 +1439,6 @@ private fun FloatingDraggedCard(drag: ActivePileDrag) {
     }
 }
 
-private data class VisibleGridSize(
-    val columns: Int,
-    val rows: Int,
-)
-
 private data class BoardDimensions(
     val cardWidth: Dp,
     val cardHeight: Dp,
@@ -1452,6 +1451,7 @@ private data class BoardDimensions(
 
 private data class GameBoardLayout(
     val landscape: Boolean,
+    val uiScale: Float,
     val horizontalPadding: Dp,
     val verticalPadding: Dp,
     val sectionSpacing: Dp,
@@ -1459,6 +1459,8 @@ private data class GameBoardLayout(
     val pileCardWidth: Dp,
     val pileCardHeight: Dp,
     val pileSlotHeight: Dp,
+    val pileLabelGap: Dp,
+    val pileLabelFontSize: androidx.compose.ui.unit.TextUnit,
     val botBoard: BoardDimensions,
     val humanBoard: BoardDimensions,
 ) {
@@ -1466,8 +1468,6 @@ private data class GameBoardLayout(
         fun calculate(
             maxWidth: Dp,
             maxHeight: Dp,
-            humanGrid: VisibleGridSize,
-            botGrid: VisibleGridSize,
         ): GameBoardLayout {
             val width = maxWidth.value
             val height = maxHeight.value
@@ -1475,10 +1475,10 @@ private data class GameBoardLayout(
             val horizontalPadding = if (width < 360f || landscape) 10f else 16f
             val verticalPadding = if (height < 620f || landscape) 8f else 16f
             val sectionSpacing = if (height < 620f || landscape) 5f else 8f
-            val humanRows = max(1, humanGrid.rows)
-            val humanColumns = max(1, humanGrid.columns)
-            val botRows = max(1, botGrid.rows)
-            val botColumns = max(1, botGrid.columns)
+            val humanRows = BOARD_GRID_ROWS
+            val humanColumns = BOARD_GRID_COLUMNS
+            val botRows = BOARD_GRID_ROWS
+            val botColumns = BOARD_GRID_COLUMNS
 
             val humanGridBaseWidth = humanColumns * HUMAN_CARD_WIDTH_DP + max(0, humanColumns - 1) * HUMAN_GRID_SPACING_DP
             val botGridBaseWidth = botColumns * BOT_CARD_WIDTH_DP + max(0, botColumns - 1) * BOT_GRID_SPACING_DP
@@ -1494,19 +1494,28 @@ private data class GameBoardLayout(
             val humanGridBaseHeight = humanRows * HUMAN_CARD_HEIGHT_DP + max(0, humanRows - 1) * HUMAN_GRID_SPACING_DP
             val botGridBaseHeight = botRows * BOT_CARD_HEIGHT_DP + max(0, botRows - 1) * BOT_GRID_SPACING_DP
             val scaleByHeight = if (landscape) {
-                val availableBoardHeight = height - 2f * verticalPadding - LANDSCAPE_HEADER_HEIGHT_DP - sectionSpacing - BOARD_TITLE_HEIGHT_DP - 2f * HUMAN_BOARD_PADDING_DP
-                val largestBoardBaseHeight = max(humanGridBaseHeight, botGridBaseHeight)
-                (availableBoardHeight / largestBoardBaseHeight).coerceAtMost(1.05f)
+                val baseHeight = 2f * verticalPadding +
+                    LANDSCAPE_HEADER_HEIGHT_DP +
+                    sectionSpacing +
+                    BOARD_TITLE_HEIGHT_DP +
+                    2f * HUMAN_BOARD_PADDING_DP +
+                    max(humanGridBaseHeight, botGridBaseHeight) +
+                    LAYOUT_HEIGHT_RESERVE_DP
+                (height / baseHeight).coerceAtMost(1.05f)
             } else {
-                val fixedHeight = 2f * verticalPadding +
+                val baseHeight = 2f * verticalPadding +
                     PORTRAIT_HEADER_HEIGHT_DP +
                     MESSAGE_HEIGHT_DP +
                     4f * sectionSpacing +
                     2f * BOARD_TITLE_HEIGHT_DP +
+                    PILE_LABEL_GAP_DP +
                     PILE_LABEL_HEIGHT_DP +
-                    2f * HUMAN_BOARD_PADDING_DP
-                val scalableHeight = humanGridBaseHeight + botGridBaseHeight + PILE_CARD_HEIGHT_DP
-                ((height - fixedHeight) / scalableHeight).coerceAtMost(1.05f)
+                    2f * HUMAN_BOARD_PADDING_DP +
+                    humanGridBaseHeight +
+                    botGridBaseHeight +
+                    PILE_CARD_HEIGHT_DP +
+                    LAYOUT_HEIGHT_RESERVE_DP
+                (height / baseHeight).coerceAtMost(1.05f)
             }
             val scale = min(scaleByWidth, scaleByHeight).coerceAtLeast(0.34f)
 
@@ -1521,13 +1530,16 @@ private data class GameBoardLayout(
 
             return GameBoardLayout(
                 landscape = landscape,
-                horizontalPadding = horizontalPadding.dp,
-                verticalPadding = verticalPadding.dp,
-                sectionSpacing = sectionSpacing.dp,
+                uiScale = scale,
+                horizontalPadding = scaled(horizontalPadding),
+                verticalPadding = scaled(verticalPadding),
+                sectionSpacing = scaled(sectionSpacing),
                 pileSpacing = scaled(PILE_SPACING_DP),
                 pileCardWidth = pileCardWidth,
                 pileCardHeight = pileCardHeight,
-                pileSlotHeight = pileCardHeight + 20.dp,
+                pileSlotHeight = pileCardHeight + scaled(20f),
+                pileLabelGap = scaled(PILE_LABEL_GAP_DP),
+                pileLabelFontSize = (12f * scale).sp,
                 botBoard = BoardDimensions(
                     cardWidth = botCardWidth,
                     cardHeight = botCardHeight,
@@ -1535,7 +1547,7 @@ private data class GameBoardLayout(
                     padding = 0.dp,
                     maxWidth = scaled(botGridBaseWidth),
                     backgroundColor = Color.Transparent,
-                    titleFontSize = 11.sp,
+                    titleFontSize = (11f * scale).sp,
                 ),
                 humanBoard = BoardDimensions(
                     cardWidth = humanCardWidth,
@@ -1544,7 +1556,7 @@ private data class GameBoardLayout(
                     padding = scaled(HUMAN_BOARD_PADDING_DP),
                     maxWidth = scaled(humanGridBaseWidth + 2f * HUMAN_BOARD_PADDING_DP),
                     backgroundColor = Color(0xFFFFA3B7),
-                    titleFontSize = 14.sp,
+                    titleFontSize = (14f * scale).sp,
                 ),
             )
         }
@@ -1635,33 +1647,18 @@ private fun BoardGrid(
                             onPositioned = { bounds -> onCardPositioned(index, bounds) },
                             onClick = { onCardClick(index) },
                         )
+                    } else {
+                        Spacer(
+                            modifier = Modifier.size(
+                                width = layout.cardWidth,
+                                height = layout.cardHeight,
+                            ),
+                        )
                     }
                 }
             }
         }
     }
-}
-
-private fun visibleGridSize(cards: List<Card>): VisibleGridSize {
-    if (cards.size < BOARD_GRID_COLUMNS * BOARD_GRID_ROWS) {
-        return VisibleGridSize(columns = BOARD_GRID_COLUMNS, rows = BOARD_GRID_ROWS)
-    }
-
-    val visibleRows = (0 until BOARD_GRID_ROWS).count { row ->
-        (0 until BOARD_GRID_COLUMNS).any { column ->
-            !cards[row * BOARD_GRID_COLUMNS + column].isCleared
-        }
-    }
-    val visibleColumns = (0 until BOARD_GRID_COLUMNS).count { column ->
-        (0 until BOARD_GRID_ROWS).any { row ->
-            !cards[row * BOARD_GRID_COLUMNS + column].isCleared
-        }
-    }
-
-    return VisibleGridSize(
-        columns = visibleColumns.coerceAtLeast(1),
-        rows = visibleRows.coerceAtLeast(1),
-    )
 }
 
 @Composable
@@ -1702,7 +1699,7 @@ private const val DOUBLE_POINTS_BADGE_ANIMATION_MS = 420L
 private const val DOUBLE_POINTS_BADGE_SETTLE_MS = 220L
 private const val BOARD_GRID_COLUMNS = 4
 private const val BOARD_GRID_ROWS = 3
-private const val CARD_ASPECT_RATIO = 62f / 90f
+private const val CARD_ASPECT_RATIO = 1024f / 1600f
 private const val HUMAN_CARD_WIDTH_DP = 72f
 private const val HUMAN_CARD_HEIGHT_DP = HUMAN_CARD_WIDTH_DP / CARD_ASPECT_RATIO
 private const val HUMAN_GRID_SPACING_DP = 8f
@@ -1713,11 +1710,13 @@ private const val BOT_GRID_SPACING_DP = 4f
 private const val PILE_CARD_WIDTH_DP = 62f
 private const val PILE_CARD_HEIGHT_DP = PILE_CARD_WIDTH_DP / CARD_ASPECT_RATIO
 private const val PILE_SPACING_DP = 12f
+private const val PILE_LABEL_GAP_DP = 4f
 private const val PILE_LABEL_HEIGHT_DP = 22f
 private const val BOARD_TITLE_HEIGHT_DP = 18f
 private const val MESSAGE_HEIGHT_DP = 20f
 private const val PORTRAIT_HEADER_HEIGHT_DP = 64f
 private const val LANDSCAPE_HEADER_HEIGHT_DP = 38f
+private const val LAYOUT_HEIGHT_RESERVE_DP = 56f
 
 private fun GameState.roundScoreLines(): List<RoundScoreLine> {
     val baseScores = players.map { player -> SkyoGame.scoreGrid(player.grid) }
