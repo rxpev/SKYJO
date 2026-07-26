@@ -6,6 +6,9 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
@@ -18,6 +21,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -62,9 +67,11 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -83,6 +90,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
@@ -387,6 +396,7 @@ private fun SkyjoGameScreen(
     }
 
     BackHandler(onBack = onReturnToMenu)
+    GameplayFullscreenEffect()
 
     fun dispatch(action: Action) {
         runCatching { SkyoGame.reduce(gameState, action) }
@@ -610,114 +620,207 @@ private fun SkyjoGameScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-    ) {
-        Column(
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val boardLayout = remember(maxWidth, maxHeight, humanPlayer.grid, opponent?.grid) {
+            GameBoardLayout.calculate(
+                maxWidth = maxWidth,
+                maxHeight = maxHeight,
+                humanGrid = visibleGridSize(humanPlayer.grid),
+                botGrid = visibleGridSize(opponent?.grid.orEmpty()),
+            )
+        }
+        val discard = gameState.discardPile.lastOrNull()
+        val canUsePiles = !gameState.roundEnded && !gameState.gameEnded && !isBotTurn && !isOpeningReveal
+        val canDragPile = canUsePiles && gameState.stage == TurnStage.DRAW_OR_TAKE
+        val canDragHeldCard = !isBotTurn &&
+            !isOpeningReveal &&
+            humanHeldCardCameFromDeck &&
+            gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD
+        val onDrawFromDeck: () -> Unit = {
+            runCatching { SkyoGame.reduce(gameState, Action.DrawFromDeck) }
+                .onSuccess { nextState ->
+                    setGameState(nextState)
+                    humanHeldCardCameFromDeck = true
+                    message = messageFor(nextState)
+                }
+                .onFailure { error ->
+                    humanHeldCardCameFromDeck = false
+                    message = error.message ?: "That move is not allowed."
+                }
+        }
+        val onHumanCardClick: (Int) -> Unit = { index ->
+            when (gameState.stage) {
+                TurnStage.OPENING_REVEAL -> dispatch(Action.RevealGrid(index))
+                TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
+                TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
+                TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
+            }
+        }
+
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(
+                    horizontal = boardLayout.horizontalPadding,
+                    vertical = boardLayout.verticalPadding,
+                ),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Image(
-                        painter = painterResource(R.drawable.icon),
-                        contentDescription = "SKYJO",
-                        modifier = Modifier.size(width = 118.dp, height = 45.dp),
-                        contentScale = ContentScale.Fit,
-                    )
-                    Text(
-                        text = "${player.name}'s turn | Score ${player.score}",
-                        fontSize = 15.sp,
-                        color = Color(0xFF36524A),
-                    )
-                }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            if (boardLayout.landscape) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(boardLayout.sectionSpacing),
                 ) {
-                    Text(
-                        text = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF143D35),
+                    GameHeader(
+                        player = player,
+                        roundText = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
+                        compact = true,
+                        onReturnToMenu = onReturnToMenu,
                     )
-                    IconButton(
-                        onClick = onReturnToMenu,
+
+                    Row(
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF6147A8)),
+                            .fillMaxWidth()
+                            .weight(1f, fill = true),
+                        horizontalArrangement = Arrangement.spacedBy(boardLayout.sectionSpacing, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.home),
-                            contentDescription = "Home",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
+                        opponent?.let {
+                            PlayerBoard(
+                                player = it,
+                                title = "${it.name} | Score ${it.score}",
+                                enabled = false,
+                                layout = boardLayout.botBoard,
+                                modifier = Modifier.weight(1f, fill = false),
+                                onCardPositioned = { index, bounds ->
+                                    if (player.id == it.id) {
+                                        gridBounds[index] = bounds
+                                    }
+                                },
+                                onCardClick = {},
+                            )
+                        }
+
+                        Column(
+                            modifier = Modifier.weight(1f, fill = false),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(boardLayout.sectionSpacing),
+                        ) {
+                            Text(
+                                text = message,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Color(0xFF41534F),
+                                fontSize = 12.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            PileRow(
+                                layout = boardLayout,
+                                drawnCard = gameState.drawnCard.takeIf { activePileDrag == null },
+                                discard = discard,
+                                deckSize = gameState.deck.size,
+                                canUsePiles = canUsePiles,
+                                canDragPile = canDragPile,
+                                canDragHeldCard = canDragHeldCard,
+                                botDropTarget = botDropTarget,
+                                humanHeldCardCameFromDeck = humanHeldCardCameFromDeck,
+                                onDrawnCardPositioned = { drawnCardBounds = it },
+                                onHeldDragStart = {
+                                    val drawn = gameState.drawnCard
+                                    if (drawn != null && drawnCardBounds != Rect.Zero) {
+                                        activePileDrag = ActivePileDrag(drawn, drawnCardBounds)
+                                    }
+                                },
+                                onDrag = { dragAmount -> activePileDrag?.moveBy(dragAmount) },
+                                onDragEnd = {
+                                    activePileDrag?.let { drag ->
+                                        handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
+                                    }
+                                    activePileDrag = null
+                                },
+                                onDropped = ::handleCardDrop,
+                                onDeckPositioned = { deckBounds = it },
+                                onDiscardPositioned = { discardBounds = it },
+                                onDeckDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
+                                onDiscardDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
+                                onDrawFromDeck = onDrawFromDeck,
+                                onDrawFromDiscard = {
+                                    humanHeldCardCameFromDeck = false
+                                    dispatch(Action.DrawFromDiscard)
+                                },
+                            )
+                        }
+
+                        PlayerBoard(
+                            player = humanPlayer,
+                            title = "${humanPlayer.name} | Score ${humanPlayer.score}",
+                            enabled = !gameState.roundEnded && !gameState.gameEnded && (!isBotTurn || isOpeningReveal),
+                            layout = boardLayout.humanBoard,
+                            modifier = Modifier.weight(1f, fill = false),
+                            onCardPositioned = { index, bounds ->
+                                if (player.id == humanPlayer.id) {
+                                    gridBounds[index] = bounds
+                                }
+                            },
+                            onCardClick = onHumanCardClick,
                         )
                     }
                 }
-            }
-
-            if (opponent != null) {
-                PlayerBoard(
-                    player = opponent,
-                    title = "${opponent.name} | Score ${opponent.score}",
-                    enabled = false,
-                    compact = true,
-                    onCardPositioned = { index, bounds ->
-                        if (player.id == opponent.id) {
-                            gridBounds[index] = bounds
-                        }
-                    },
-                    onCardClick = {},
-                )
-            }
-
-            Text(
-                text = message,
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF41534F),
-                fontSize = 13.sp,
-            )
-
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.Top,
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(boardLayout.sectionSpacing),
                 ) {
-                    HeldCardSlot(
-                        card = gameState.drawnCard.takeIf { activePileDrag == null },
-                        draggable = !isBotTurn &&
-                            !isOpeningReveal &&
-                            humanHeldCardCameFromDeck &&
-                            gameState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD,
-                        animatedDropTarget = botDropTarget,
-                        onPositioned = { bounds ->
-                            drawnCardBounds = bounds
-                        },
-                        onDragStart = {
+                    GameHeader(
+                        player = player,
+                        roundText = if (gameState.gameEnded) "Game over" else "Round ${gameState.round}",
+                        compact = false,
+                        onReturnToMenu = onReturnToMenu,
+                    )
+
+                    if (opponent != null) {
+                        PlayerBoard(
+                            player = opponent,
+                            title = "${opponent.name} | Score ${opponent.score}",
+                            enabled = false,
+                            layout = boardLayout.botBoard,
+                            onCardPositioned = { index, bounds ->
+                                if (player.id == opponent.id) {
+                                    gridBounds[index] = bounds
+                                }
+                            },
+                            onCardClick = {},
+                        )
+                    }
+
+                    Text(
+                        text = message,
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(0xFF41534F),
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+
+                    PileRow(
+                        layout = boardLayout,
+                        drawnCard = gameState.drawnCard.takeIf { activePileDrag == null },
+                        discard = discard,
+                        deckSize = gameState.deck.size,
+                        canUsePiles = canUsePiles,
+                        canDragPile = canDragPile,
+                        canDragHeldCard = canDragHeldCard,
+                        botDropTarget = botDropTarget,
+                        humanHeldCardCameFromDeck = humanHeldCardCameFromDeck,
+                        onDrawnCardPositioned = { drawnCardBounds = it },
+                        onHeldDragStart = {
                             val drawn = gameState.drawnCard
                             if (drawn != null && drawnCardBounds != Rect.Zero) {
-                                activePileDrag = ActivePileDrag(
-                                    card = drawn,
-                                    sourceBounds = drawnCardBounds,
-                                )
+                                activePileDrag = ActivePileDrag(drawn, drawnCardBounds)
                             }
                         },
-                        onDrag = { dragAmount ->
-                            activePileDrag?.moveBy(dragAmount)
-                        },
+                        onDrag = { dragAmount -> activePileDrag?.moveBy(dragAmount) },
                         onDragEnd = {
                             activePileDrag?.let { drag ->
                                 handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
@@ -725,97 +828,35 @@ private fun SkyjoGameScreen(
                             activePileDrag = null
                         },
                         onDropped = ::handleCardDrop,
-                    )
-                    PileCard(
-                        label = "Deck",
-                        value = gameState.deck.size.toString(),
-                        compact = true,
-                        enabled = !gameState.roundEnded && !gameState.gameEnded && !isBotTurn && !isOpeningReveal,
-                        draggable = !gameState.roundEnded &&
-                            !gameState.gameEnded &&
-                            !isBotTurn &&
-                            !isOpeningReveal &&
-                            gameState.stage == TurnStage.DRAW_OR_TAKE,
-                        onPositioned = { deckBounds = it },
-                        onDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
-                        onDrag = { dragAmount ->
-                            activePileDrag?.moveBy(dragAmount)
-                        },
-                        onDragEnd = {
-                            activePileDrag?.let { drag ->
-                                handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
-                            }
-                            activePileDrag = null
-                        },
-                        onClick = {
-                            runCatching { SkyoGame.reduce(gameState, Action.DrawFromDeck) }
-                                .onSuccess { nextState ->
-                                    setGameState(nextState)
-                                    humanHeldCardCameFromDeck = true
-                                    message = messageFor(nextState)
-                                }
-                                .onFailure { error ->
-                                    humanHeldCardCameFromDeck = false
-                                    message = error.message ?: "That move is not allowed."
-                                }
-                        },
-                    )
-                    val discard = gameState.discardPile.lastOrNull()
-                    PileCard(
-                        label = "Discard",
-                        value = discard?.value?.toString() ?: "-",
-                        imageRes = discard?.let { cardImageRes(it.value) },
-                        compact = true,
-                        enabled = !gameState.roundEnded && !gameState.gameEnded && !isBotTurn && !isOpeningReveal,
-                        draggable = !gameState.roundEnded &&
-                            !gameState.gameEnded &&
-                            !isBotTurn &&
-                            !isOpeningReveal &&
-                            gameState.stage == TurnStage.DRAW_OR_TAKE,
-                        onPositioned = { discardBounds = it },
-                        onDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
-                        onDrag = { dragAmount ->
-                            activePileDrag?.moveBy(dragAmount)
-                        },
-                        onDragEnd = {
-                            activePileDrag?.let { drag ->
-                                handleCardDrop(drag.sourceBounds.center + drag.dragOffset)
-                            }
-                            activePileDrag = null
-                        },
-                        onClick = {
+                        onDeckPositioned = { deckBounds = it },
+                        onDiscardPositioned = { discardBounds = it },
+                        onDeckDragStart = { beginPileDrag(Action.DrawFromDeck, deckBounds) },
+                        onDiscardDragStart = { beginPileDrag(Action.DrawFromDiscard, discardBounds) },
+                        onDrawFromDeck = onDrawFromDeck,
+                        onDrawFromDiscard = {
                             humanHeldCardCameFromDeck = false
                             dispatch(Action.DrawFromDiscard)
                         },
                     )
+
+                    PlayerBoard(
+                        player = humanPlayer,
+                        title = "${humanPlayer.name} | Score ${humanPlayer.score}",
+                        enabled = !gameState.roundEnded && !gameState.gameEnded && (!isBotTurn || isOpeningReveal),
+                        layout = boardLayout.humanBoard,
+                        onCardPositioned = { index, bounds ->
+                            if (player.id == humanPlayer.id) {
+                                gridBounds[index] = bounds
+                            }
+                        },
+                        onCardClick = onHumanCardClick,
+                    )
                 }
             }
 
-            PlayerBoard(
-                player = humanPlayer,
-                title = "${humanPlayer.name} | Score ${humanPlayer.score}",
-                enabled = !gameState.roundEnded && !gameState.gameEnded && (!isBotTurn || isOpeningReveal),
-                compact = false,
-                modifier = Modifier.weight(1f, fill = false),
-                onCardPositioned = { index, bounds ->
-                    if (player.id == humanPlayer.id) {
-                        gridBounds[index] = bounds
-                    }
-                },
-                onCardClick = { index ->
-                    when (gameState.stage) {
-                        TurnStage.OPENING_REVEAL -> dispatch(Action.RevealGrid(index))
-                        TurnStage.CHOOSE_SWAP_OR_DISCARD -> dispatch(Action.SwapWithGrid(index))
-                        TurnStage.TURN_END -> dispatch(Action.RevealGrid(index))
-                        TurnStage.DRAW_OR_TAKE -> message = "Draw or take the discard card first."
-                    }
-                },
-            )
-
-        }
-
-        activePileDrag?.let { drag ->
-            FloatingDraggedCard(drag)
+            activePileDrag?.let { drag ->
+                FloatingDraggedCard(drag)
+            }
         }
     }
 
@@ -1015,11 +1056,169 @@ private fun ClearedSlot() {
 }
 
 @Composable
+private fun GameHeader(
+    player: PlayerState,
+    roundText: String,
+    compact: Boolean,
+    onReturnToMenu: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (compact) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GameLogo(compact = true)
+                GameTurnText(player = player, compact = true)
+            }
+        } else {
+            Column {
+                GameLogo(compact = false)
+                GameTurnText(player = player, compact = false)
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = roundText,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF143D35),
+                maxLines = 1,
+            )
+            IconButton(
+                onClick = onReturnToMenu,
+                modifier = Modifier
+                    .size(if (compact) 36.dp else 40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF6147A8)),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.home),
+                    contentDescription = "Home",
+                    tint = Color.White,
+                    modifier = Modifier.size(if (compact) 20.dp else 22.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameLogo(compact: Boolean) {
+    Image(
+        painter = painterResource(R.drawable.icon),
+        contentDescription = "SKYJO",
+        modifier = Modifier.size(
+            width = if (compact) 96.dp else 118.dp,
+            height = if (compact) 36.dp else 45.dp,
+        ),
+        contentScale = ContentScale.Fit,
+    )
+}
+
+@Composable
+private fun GameTurnText(
+    player: PlayerState,
+    compact: Boolean,
+) {
+    Text(
+        text = "${player.name}'s turn | Score ${player.score}",
+        fontSize = if (compact) 12.sp else 15.sp,
+        color = Color(0xFF36524A),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
+private fun PileRow(
+    layout: GameBoardLayout,
+    drawnCard: Card?,
+    discard: Card?,
+    deckSize: Int,
+    canUsePiles: Boolean,
+    canDragPile: Boolean,
+    canDragHeldCard: Boolean,
+    botDropTarget: Rect?,
+    humanHeldCardCameFromDeck: Boolean,
+    onDrawnCardPositioned: (Rect) -> Unit,
+    onHeldDragStart: () -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDropped: (Offset) -> Unit,
+    onDeckPositioned: (Rect) -> Unit,
+    onDiscardPositioned: (Rect) -> Unit,
+    onDeckDragStart: () -> Unit,
+    onDiscardDragStart: () -> Unit,
+    onDrawFromDeck: () -> Unit,
+    onDrawFromDiscard: () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(layout.pileSpacing),
+            verticalAlignment = Alignment.Top,
+        ) {
+            HeldCardSlot(
+                card = drawnCard,
+                cardWidth = layout.pileCardWidth,
+                cardHeight = layout.pileCardHeight,
+                slotHeight = layout.pileSlotHeight,
+                draggable = canDragHeldCard && humanHeldCardCameFromDeck,
+                animatedDropTarget = botDropTarget,
+                onPositioned = onDrawnCardPositioned,
+                onDragStart = onHeldDragStart,
+                onDrag = onDrag,
+                onDragEnd = onDragEnd,
+                onDropped = onDropped,
+            )
+            PileCard(
+                label = "Deck",
+                value = deckSize.toString(),
+                cardWidth = layout.pileCardWidth,
+                cardHeight = layout.pileCardHeight,
+                enabled = canUsePiles,
+                draggable = canDragPile,
+                onPositioned = onDeckPositioned,
+                onDragStart = onDeckDragStart,
+                onDrag = onDrag,
+                onDragEnd = onDragEnd,
+                onClick = onDrawFromDeck,
+            )
+            PileCard(
+                label = "Discard",
+                value = discard?.value?.toString() ?: "-",
+                imageRes = discard?.let { cardImageRes(it.value) },
+                cardWidth = layout.pileCardWidth,
+                cardHeight = layout.pileCardHeight,
+                enabled = canUsePiles,
+                draggable = canDragPile,
+                onPositioned = onDiscardPositioned,
+                onDragStart = onDiscardDragStart,
+                onDrag = onDrag,
+                onDragEnd = onDragEnd,
+                onClick = onDrawFromDiscard,
+            )
+        }
+    }
+}
+
+@Composable
 private fun PileCard(
     label: String,
     value: String,
     imageRes: Int? = null,
-    compact: Boolean = false,
+    cardWidth: Dp,
+    cardHeight: Dp,
     enabled: Boolean = true,
     draggable: Boolean = false,
     onPositioned: (Rect) -> Unit = {},
@@ -1036,10 +1235,7 @@ private fun PileCard(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(
-                    width = if (compact) 62.dp else 82.dp,
-                    height = if (compact) 90.dp else 118.dp,
-                )
+                .size(width = cardWidth, height = cardHeight)
                 .clip(RoundedCornerShape(6.dp))
                 .onGloballyPositioned { onPositioned(it.boundsInRoot()) }
                 .pointerInput(Unit) {
@@ -1088,9 +1284,11 @@ private fun PileCard(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = if (label == "Deck") "$label ($value)" else label,
-            fontSize = if (compact) 12.sp else 13.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFF143D35),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -1099,6 +1297,9 @@ private fun PileCard(
 private fun HeldCardSlot(
     modifier: Modifier = Modifier,
     card: Card?,
+    cardWidth: Dp,
+    cardHeight: Dp,
+    slotHeight: Dp,
     draggable: Boolean,
     animatedDropTarget: Rect?,
     onPositioned: (Rect) -> Unit,
@@ -1135,12 +1336,12 @@ private fun HeldCardSlot(
     Box(
         modifier = modifier
             .zIndex(1f)
-            .size(width = 62.dp, height = 110.dp),
+            .size(width = cardWidth, height = slotHeight),
         contentAlignment = Alignment.TopCenter,
     ) {
         Box(
             modifier = Modifier
-                .size(width = 62.dp, height = 90.dp)
+                .size(width = cardWidth, height = cardHeight)
                 .offset {
                     IntOffset(
                         botDragOffset.value.x.roundToInt(),
@@ -1234,40 +1435,157 @@ private fun FloatingDraggedCard(drag: ActivePileDrag) {
     }
 }
 
+private data class VisibleGridSize(
+    val columns: Int,
+    val rows: Int,
+)
+
+private data class BoardDimensions(
+    val cardWidth: Dp,
+    val cardHeight: Dp,
+    val spacing: Dp,
+    val padding: Dp,
+    val maxWidth: Dp,
+    val backgroundColor: Color,
+    val titleFontSize: androidx.compose.ui.unit.TextUnit,
+)
+
+private data class GameBoardLayout(
+    val landscape: Boolean,
+    val horizontalPadding: Dp,
+    val verticalPadding: Dp,
+    val sectionSpacing: Dp,
+    val pileSpacing: Dp,
+    val pileCardWidth: Dp,
+    val pileCardHeight: Dp,
+    val pileSlotHeight: Dp,
+    val botBoard: BoardDimensions,
+    val humanBoard: BoardDimensions,
+) {
+    companion object {
+        fun calculate(
+            maxWidth: Dp,
+            maxHeight: Dp,
+            humanGrid: VisibleGridSize,
+            botGrid: VisibleGridSize,
+        ): GameBoardLayout {
+            val width = maxWidth.value
+            val height = maxHeight.value
+            val landscape = width > height
+            val horizontalPadding = if (width < 360f || landscape) 10f else 16f
+            val verticalPadding = if (height < 620f || landscape) 8f else 16f
+            val sectionSpacing = if (height < 620f || landscape) 5f else 8f
+            val humanRows = max(1, humanGrid.rows)
+            val humanColumns = max(1, humanGrid.columns)
+            val botRows = max(1, botGrid.rows)
+            val botColumns = max(1, botGrid.columns)
+
+            val humanGridBaseWidth = humanColumns * HUMAN_CARD_WIDTH_DP + max(0, humanColumns - 1) * HUMAN_GRID_SPACING_DP
+            val botGridBaseWidth = botColumns * BOT_CARD_WIDTH_DP + max(0, botColumns - 1) * BOT_GRID_SPACING_DP
+            val pileRowBaseWidth = 3f * PILE_CARD_WIDTH_DP + 2f * PILE_SPACING_DP
+
+            val scaleByWidth = if (landscape) {
+                val totalBaseWidth = humanGridBaseWidth + botGridBaseWidth + pileRowBaseWidth + 2f * sectionSpacing + 2f * HUMAN_BOARD_PADDING_DP
+                ((width - 2f * horizontalPadding) / totalBaseWidth).coerceAtMost(1.05f)
+            } else {
+                ((width - 2f * horizontalPadding - 2f * HUMAN_BOARD_PADDING_DP) / humanGridBaseWidth).coerceAtMost(1.05f)
+            }
+
+            val humanGridBaseHeight = humanRows * HUMAN_CARD_HEIGHT_DP + max(0, humanRows - 1) * HUMAN_GRID_SPACING_DP
+            val botGridBaseHeight = botRows * BOT_CARD_HEIGHT_DP + max(0, botRows - 1) * BOT_GRID_SPACING_DP
+            val scaleByHeight = if (landscape) {
+                val availableBoardHeight = height - 2f * verticalPadding - LANDSCAPE_HEADER_HEIGHT_DP - sectionSpacing - BOARD_TITLE_HEIGHT_DP - 2f * HUMAN_BOARD_PADDING_DP
+                val largestBoardBaseHeight = max(humanGridBaseHeight, botGridBaseHeight)
+                (availableBoardHeight / largestBoardBaseHeight).coerceAtMost(1.05f)
+            } else {
+                val fixedHeight = 2f * verticalPadding +
+                    PORTRAIT_HEADER_HEIGHT_DP +
+                    MESSAGE_HEIGHT_DP +
+                    4f * sectionSpacing +
+                    2f * BOARD_TITLE_HEIGHT_DP +
+                    PILE_LABEL_HEIGHT_DP +
+                    2f * HUMAN_BOARD_PADDING_DP
+                val scalableHeight = humanGridBaseHeight + botGridBaseHeight + PILE_CARD_HEIGHT_DP
+                ((height - fixedHeight) / scalableHeight).coerceAtMost(1.05f)
+            }
+            val scale = min(scaleByWidth, scaleByHeight).coerceAtLeast(0.34f)
+
+            fun scaled(value: Float): Dp = (value * scale).dp
+
+            val humanCardWidth = scaled(HUMAN_CARD_WIDTH_DP)
+            val humanCardHeight = humanCardWidth / CARD_ASPECT_RATIO
+            val botCardWidth = scaled(BOT_CARD_WIDTH_DP)
+            val botCardHeight = botCardWidth / CARD_ASPECT_RATIO
+            val pileCardWidth = scaled(PILE_CARD_WIDTH_DP)
+            val pileCardHeight = pileCardWidth / CARD_ASPECT_RATIO
+
+            return GameBoardLayout(
+                landscape = landscape,
+                horizontalPadding = horizontalPadding.dp,
+                verticalPadding = verticalPadding.dp,
+                sectionSpacing = sectionSpacing.dp,
+                pileSpacing = scaled(PILE_SPACING_DP),
+                pileCardWidth = pileCardWidth,
+                pileCardHeight = pileCardHeight,
+                pileSlotHeight = pileCardHeight + 20.dp,
+                botBoard = BoardDimensions(
+                    cardWidth = botCardWidth,
+                    cardHeight = botCardHeight,
+                    spacing = scaled(BOT_GRID_SPACING_DP),
+                    padding = 0.dp,
+                    maxWidth = scaled(botGridBaseWidth),
+                    backgroundColor = Color.Transparent,
+                    titleFontSize = 11.sp,
+                ),
+                humanBoard = BoardDimensions(
+                    cardWidth = humanCardWidth,
+                    cardHeight = humanCardHeight,
+                    spacing = scaled(HUMAN_GRID_SPACING_DP),
+                    padding = scaled(HUMAN_BOARD_PADDING_DP),
+                    maxWidth = scaled(humanGridBaseWidth + 2f * HUMAN_BOARD_PADDING_DP),
+                    backgroundColor = Color(0xFFFFA3B7),
+                    titleFontSize = 14.sp,
+                ),
+            )
+        }
+    }
+}
+
 @Composable
 private fun PlayerBoard(
     player: PlayerState,
     title: String,
     enabled: Boolean,
-    compact: Boolean,
+    layout: BoardDimensions,
     modifier: Modifier = Modifier,
     onCardPositioned: (Int, Rect) -> Unit,
     onCardClick: (Int) -> Unit,
 ) {
     Column(
         modifier = modifier
-            .widthIn(max = if (compact) 224.dp else 352.dp)
+            .widthIn(max = layout.maxWidth)
             .fillMaxWidth()
             .background(
-                color = if (compact) Color.Transparent else Color(0xFFFFA3B7),
+                color = layout.backgroundColor,
                 shape = RoundedCornerShape(8.dp),
             )
-            .padding(if (compact) 0.dp else 10.dp),
+            .padding(layout.padding),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 8.dp),
+        verticalArrangement = Arrangement.spacedBy(layout.spacing),
     ) {
         Text(
             text = title,
             modifier = Modifier.fillMaxWidth(),
-            fontSize = if (compact) 11.sp else 14.sp,
+            fontSize = layout.titleFontSize,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF143D35),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         BoardGrid(
             cards = player.grid,
             enabled = enabled,
-            compact = compact,
-            spacing = if (compact) 4.dp else 8.dp,
+            layout = layout,
             onCardPositioned = onCardPositioned,
             onCardClick = onCardClick,
         )
@@ -1278,14 +1596,10 @@ private fun PlayerBoard(
 private fun BoardGrid(
     cards: List<Card>,
     enabled: Boolean,
-    compact: Boolean,
-    spacing: Dp,
+    layout: BoardDimensions,
     onCardPositioned: (Int, Rect) -> Unit,
     onCardClick: (Int) -> Unit,
 ) {
-    val cardWidth = if (compact) 46.dp else 72.dp
-    val cardHeight = if (compact) 68.dp else 106.dp
-    val gridHeight = cardHeight * BOARD_GRID_ROWS + spacing * (BOARD_GRID_ROWS - 1)
     val visibleRows = (0 until BOARD_GRID_ROWS).filter { row ->
         (0 until BOARD_GRID_COLUMNS).any { column ->
             !cards[row * BOARD_GRID_COLUMNS + column].isCleared
@@ -1296,17 +1610,19 @@ private fun BoardGrid(
             !cards[row * BOARD_GRID_COLUMNS + column].isCleared
         }
     }
+    val rowsToMeasure = visibleRows.size.coerceAtLeast(1)
+    val gridHeight = layout.cardHeight * rowsToMeasure + layout.spacing * (rowsToMeasure - 1)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .height(gridHeight),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(spacing, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(layout.spacing, Alignment.CenterVertically),
     ) {
         visibleRows.forEach { row ->
             Row(
-                horizontalArrangement = Arrangement.spacedBy(spacing),
+                horizontalArrangement = Arrangement.spacedBy(layout.spacing),
             ) {
                 visibleColumns.forEach { column ->
                     val index = row * BOARD_GRID_COLUMNS + column
@@ -1315,12 +1631,57 @@ private fun BoardGrid(
                         BoardCard(
                             card = card,
                             enabled = enabled,
-                            modifier = Modifier.size(width = cardWidth, height = cardHeight),
+                            modifier = Modifier.size(width = layout.cardWidth, height = layout.cardHeight),
                             onPositioned = { bounds -> onCardPositioned(index, bounds) },
                             onClick = { onCardClick(index) },
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+private fun visibleGridSize(cards: List<Card>): VisibleGridSize {
+    if (cards.size < BOARD_GRID_COLUMNS * BOARD_GRID_ROWS) {
+        return VisibleGridSize(columns = BOARD_GRID_COLUMNS, rows = BOARD_GRID_ROWS)
+    }
+
+    val visibleRows = (0 until BOARD_GRID_ROWS).count { row ->
+        (0 until BOARD_GRID_COLUMNS).any { column ->
+            !cards[row * BOARD_GRID_COLUMNS + column].isCleared
+        }
+    }
+    val visibleColumns = (0 until BOARD_GRID_COLUMNS).count { column ->
+        (0 until BOARD_GRID_ROWS).any { row ->
+            !cards[row * BOARD_GRID_COLUMNS + column].isCleared
+        }
+    }
+
+    return VisibleGridSize(
+        columns = visibleColumns.coerceAtLeast(1),
+        rows = visibleRows.coerceAtLeast(1),
+    )
+}
+
+@Composable
+private fun GameplayFullscreenEffect() {
+    val view = LocalView.current
+
+    DisposableEffect(view) {
+        val window = (view.context as? ComponentActivity)?.window
+        if (window == null) {
+            onDispose {}
+        } else {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            WindowInsetsControllerCompat(window, view).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+
+            onDispose {
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                WindowInsetsControllerCompat(window, view).show(WindowInsetsCompat.Type.systemBars())
             }
         }
     }
@@ -1341,6 +1702,22 @@ private const val DOUBLE_POINTS_BADGE_ANIMATION_MS = 420L
 private const val DOUBLE_POINTS_BADGE_SETTLE_MS = 220L
 private const val BOARD_GRID_COLUMNS = 4
 private const val BOARD_GRID_ROWS = 3
+private const val CARD_ASPECT_RATIO = 62f / 90f
+private const val HUMAN_CARD_WIDTH_DP = 72f
+private const val HUMAN_CARD_HEIGHT_DP = HUMAN_CARD_WIDTH_DP / CARD_ASPECT_RATIO
+private const val HUMAN_GRID_SPACING_DP = 8f
+private const val HUMAN_BOARD_PADDING_DP = 10f
+private const val BOT_CARD_WIDTH_DP = 46f
+private const val BOT_CARD_HEIGHT_DP = BOT_CARD_WIDTH_DP / CARD_ASPECT_RATIO
+private const val BOT_GRID_SPACING_DP = 4f
+private const val PILE_CARD_WIDTH_DP = 62f
+private const val PILE_CARD_HEIGHT_DP = PILE_CARD_WIDTH_DP / CARD_ASPECT_RATIO
+private const val PILE_SPACING_DP = 12f
+private const val PILE_LABEL_HEIGHT_DP = 22f
+private const val BOARD_TITLE_HEIGHT_DP = 18f
+private const val MESSAGE_HEIGHT_DP = 20f
+private const val PORTRAIT_HEADER_HEIGHT_DP = 64f
+private const val LANDSCAPE_HEADER_HEIGHT_DP = 38f
 
 private fun GameState.roundScoreLines(): List<RoundScoreLine> {
     val baseScores = players.map { player -> SkyoGame.scoreGrid(player.grid) }
