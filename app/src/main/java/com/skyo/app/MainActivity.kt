@@ -72,12 +72,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.skyo.game.Action
+import com.skyo.game.BotDecisionEngine
 import com.skyo.game.Card
 import com.skyo.game.GameState
 import com.skyo.game.PlayerState
 import com.skyo.game.SkyoGame
 import com.skyo.game.TurnStage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
@@ -498,7 +501,9 @@ private fun SkyjoGameScreen(
             var nextState = gameState
 
             if (nextState.stage == TurnStage.DRAW_OR_TAKE) {
-                val drawAction = chooseBotDrawAction(nextState)
+                val drawAction = withContext(Dispatchers.Default) {
+                    BotDecisionEngine.chooseAction(nextState).action
+                }
                 message = "${player.name} is choosing a pile..."
                 delay(BOT_DECISION_DELAY_MS)
                 nextState = SkyoGame.reduce(nextState, drawAction)
@@ -514,7 +519,10 @@ private fun SkyjoGameScreen(
             if (nextState.stage == TurnStage.CHOOSE_SWAP_OR_DISCARD) {
                 delay(BOT_CARD_REVIEW_DELAY_MS)
                 val drawn = nextState.drawnCard
-                val swapIndex = chooseBotSwapIndex(nextState)
+                val action = withContext(Dispatchers.Default) {
+                    BotDecisionEngine.chooseAction(nextState).action
+                }
+                val swapIndex = (action as? Action.SwapWithGrid)?.index
                 if (drawn != null && swapIndex != null) {
                     gridBounds[swapIndex]?.takeIf { drawnCardBounds != Rect.Zero }?.let { target ->
                         message = "${player.name} is moving ${drawn.value} into slot ${swapIndex + 1}..."
@@ -532,16 +540,23 @@ private fun SkyjoGameScreen(
                         botDropTarget = target
                         delay(BOT_CARD_DRAG_DURATION_MS + BOT_AFTER_CARD_DRAG_DELAY_MS)
                     }
-                    nextState = SkyoGame.reduce(nextState, Action.DiscardDrawnCard)
+                    nextState = SkyoGame.reduce(nextState, action)
                     setGameState(nextState)
                     humanHeldCardCameFromDeck = false
                     botDropTarget = null
-                    message = "${player.name} discarded the drawn card."
+                    message = if (action == Action.ReturnDrawnDiscardCard) {
+                        "${player.name} returned the discard card."
+                    } else {
+                        "${player.name} discarded the drawn card."
+                    }
                 }
             }
 
             if (nextState.stage == TurnStage.TURN_END && nextState.revealRequiredBeforeEndTurn) {
-                val revealIndex = chooseBotRevealIndex(nextState)
+                val revealAction = withContext(Dispatchers.Default) {
+                    BotDecisionEngine.chooseAction(nextState).action
+                }
+                val revealIndex = (revealAction as? Action.RevealGrid)?.index
                 if (revealIndex == null) {
                     message = messageFor(nextState)
                     return@LaunchedEffect
@@ -1328,43 +1343,6 @@ private const val DOUBLE_POINTS_BADGE_ANIMATION_MS = 420L
 private const val DOUBLE_POINTS_BADGE_SETTLE_MS = 220L
 private const val BOARD_GRID_COLUMNS = 4
 private const val BOARD_GRID_ROWS = 3
-
-private fun chooseBotDrawAction(state: GameState): Action {
-    val bot = state.players[state.currentPlayerIndex]
-    val discard = state.discardPile.lastOrNull()
-    val worstCard = bot.grid
-        .withIndex()
-        .filterNot { it.value.isCleared }
-        .maxByOrNull { it.value.value }
-        ?.value
-
-    return if (discard != null && worstCard != null && discard.value < worstCard.value) {
-        Action.DrawFromDiscard
-    } else {
-        Action.DrawFromDeck
-    }
-}
-
-private fun chooseBotSwapIndex(state: GameState): Int? {
-    val drawn = state.drawnCard ?: return null
-    val bot = state.players[state.currentPlayerIndex]
-    val worstSlot = bot.grid
-        .withIndex()
-        .filterNot { it.value.isCleared }
-        .maxByOrNull { it.value.value }
-        ?: return null
-
-    return if (drawn.value < worstSlot.value.value) worstSlot.index else null
-}
-
-private fun chooseBotRevealIndex(state: GameState): Int? {
-    val bot = state.players[state.currentPlayerIndex]
-    return bot.grid
-        .withIndex()
-        .filter { !it.value.isCleared && !it.value.isRevealed }
-        .minByOrNull { it.value.value }
-        ?.index
-}
 
 private fun GameState.roundScoreLines(): List<RoundScoreLine> {
     val baseScores = players.map { player -> SkyoGame.scoreGrid(player.grid) }
